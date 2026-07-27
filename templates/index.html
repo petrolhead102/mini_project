@@ -1,0 +1,256 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="Locate, track, and reserve electric vehicle (EV) charging stations in real-time. Features interactive map search, fast charger filtering, and booking management.">
+  <title>VoltRoute | EV Charging Station Finder</title>
+
+  <!-- Custom Styling -->
+
+  <!-- Custom Styling -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+
+<body>
+
+  <!-- App Header -->
+  <header>
+    <a href="/" class="logo-container" id="logo-link">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+        </svg>
+      </div>
+      <span class="logo-text">Volt<span class="logo-accent">Route</span></span>
+    </a>
+
+    <nav aria-label="Main Navigation">
+      <a href="/" class="nav-link active" id="nav-home">Home</a>
+      <a href="#" class="nav-link" id="nav-explore">Explore</a>
+      <a href="#" class="nav-link" id="nav-support">Support</a>
+    </nav>
+
+    <div class="auth-panel" id="auth-panel">
+      <!-- Managed dynamically by app.js -->
+      <button class="btn btn-outline" id="placeholder-login">Sign In</button>
+      <button class="btn btn-primary" id="placeholder-register">Register</button>
+    </div>
+  </header>
+
+  <!-- Dashboard Container -->
+  <main class="dashboard-container">
+
+    <!-- Stats Banner -->
+    <section class="stats-panel" aria-label="Overview Metrics">
+      <div class="stat-card blue">
+        <div class="stat-info">
+          <span class="stat-label">Total Stations</span>
+          <span class="stat-value" id="stat-total">0</span>
+        </div>
+        <div class="stat-icon-wrapper">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"></path>
+            <line x1="10" y1="12" x2="10" y2="12.01"></line>
+            <path d="M10 8h.01"></path>
+            <path d="M10 16h.01"></path>
+            <path d="M14 8h.01"></path>
+            <path d="M14 12h.01"></path>
+            <path d="M14 16h.01"></path>
+            <path d="M18 15h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z"></path>
+          </svg>
+        </div>
+      </div>
+
+      <div class="stat-card green">
+        <div class="stat-info">
+          <span class="stat-label">Available Plugs</span>
+          <span class="stat-value" id="stat-available">0</span>
+        </div>
+        <div class="stat-icon-wrapper">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+      </div>
+
+      <div class="stat-card orange">
+        <div class="stat-info">
+          <span class="stat-label">Currently Occupied</span>
+          <span class="stat-value" id="stat-inuse">0</span>
+        </div>
+        <div class="stat-icon-wrapper">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </div>
+      </div>
+
+      <div class="stat-card rose">
+        <div class="stat-info">
+          <span class="stat-label">Offline / Maintenance</span>
+          <span class="stat-value" id="stat-offline">0</span>
+        </div>
+        <div class="stat-icon-wrapper">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- Workspace Panel: Station List and Interactive Map -->
+    <section class="app-workspace" aria-label="Station Finder Interface">
+
+      <!-- Sidebar panel with list -->
+      <div class="sidebar-panel">
+        <div class="sidebar-header">
+
+          <div class="search-wrapper">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+            </svg>
+            <input type="text" class="search-input" id="search-input"
+              placeholder="Search by station name or address...">
+          </div>
+
+          <div class="filters-container">
+            <div class="filter-group-label">Status</div>
+            <div class="filter-chips" id="status-filters">
+              <button class="chip active" data-status="all" id="chip-status-all">All</button>
+              <button class="chip" data-status="available" id="chip-status-avail">Available</button>
+              <button class="chip" data-status="charging" id="chip-status-busy">In Use</button>
+              <button class="chip" data-status="offline" id="chip-status-off">Offline</button>
+            </div>
+          </div>
+
+          <div class="filters-container">
+            <div class="filter-group-label">Charger Speed</div>
+            <div class="filter-chips" id="type-filters">
+              <button class="chip active" data-type="all" id="chip-type-all">All Speeds</button>
+              <button class="chip" data-type="DC Fast" id="chip-type-fast">DC Fast</button>
+              <button class="chip" data-type="Level 2" id="chip-type-lvl2">Level 2</button>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="stations-list" id="stations-list">
+          <!-- Rendered dynamically by app.js -->
+        </div>
+      </div>
+
+      <!-- Interactive Map Panel -->
+      <div class="map-panel">
+        <div id="map" aria-label="Interactive Station Map"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- Login Modal -->
+  <div class="modal-overlay" id="login-modal">
+    <div class="modal-container" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <button class="modal-close" aria-label="Close modal" id="btn-close-login">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div class="modal-header">
+        <h2 class="modal-title" id="login-title">Welcome Back</h2>
+        <p class="modal-desc">Sign in to your account to reserve chargers</p>
+      </div>
+
+      <form id="login-form">
+        <div class="form-message" id="login-error-msg"></div>
+
+        <div class="form-group">
+          <label for="login-email" class="form-label">Email Address</label>
+          <input type="email" id="login-email" class="form-input" required placeholder="name@example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="login-password" class="form-label">Password</label>
+          <input type="password" id="login-password" class="form-input" required placeholder="Enter password">
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;"
+          id="btn-submit-login">Sign In</button>
+
+        <div class="form-footer">
+          Don't have an account? <a href="#" class="form-link" id="switch-to-register">Create Account</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Register Modal -->
+  <div class="modal-overlay" id="register-modal">
+    <div class="modal-container" role="dialog" aria-modal="true" aria-labelledby="register-title">
+      <button class="modal-close" aria-label="Close modal" id="btn-close-register">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div class="modal-header">
+        <h2 class="modal-title" id="register-title">Create Account</h2>
+        <p class="modal-desc">Join VoltRoute to easily manage your EV charging reservations</p>
+      </div>
+
+      <form id="register-form">
+        <div class="form-message" id="register-error-msg"></div>
+
+        <div class="form-group">
+          <label for="register-username" class="form-label">Username</label>
+          <input type="text" id="register-username" class="form-input" required placeholder="Choose username"
+            minlength="3">
+        </div>
+
+        <div class="form-group">
+          <label for="register-email" class="form-label">Email Address</label>
+          <input type="email" id="register-email" class="form-input" required placeholder="name@example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="register-password" class="form-label">Password</label>
+          <input type="password" id="register-password" class="form-input" required placeholder="Create secure password"
+            minlength="6">
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;"
+          id="btn-submit-register">Create Account</button>
+
+        <div class="form-footer">
+          Already have an account? <a href="#" class="form-link" id="switch-to-login">Sign In</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <p>&copy; 2026 VoltRoute. All rights reserved.</p>
+  </footer>
+
+  <!-- Google Maps JavaScript API -->
+  <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places"></script>
+
+  <!-- Custom Logic -->
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+
+</html>
