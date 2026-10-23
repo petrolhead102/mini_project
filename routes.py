@@ -1,10 +1,21 @@
-from flask import Blueprint, jsonify, g, request, current_app
-import requests
+import math
 import random
 
+from flask import Blueprint, jsonify, g, request, current_app
+import requests
+
 from decorators import login_required
+from database import db
+from models import VehicleProfile
 
 main = Blueprint("main", __name__)
+
+VEHICLE_CONNECTOR_TYPES = {
+    "CCS",
+    "CHAdeMO",
+    "J1772",
+    "Tesla NACS"
+}
 
 
 @main.route("/profile", methods=["GET"])
@@ -15,6 +26,71 @@ def profile():
         "username": g.user.username,
         "email": g.user.email
     })
+
+
+@main.route("/api/vehicle-profile", methods=["GET"])
+@login_required
+def get_vehicle_profile():
+    vehicle = VehicleProfile.query.filter_by(user_id=g.user.id).first()
+    if not vehicle:
+        return jsonify({"vehicle": None}), 200
+
+    return jsonify({
+        "vehicle": {
+            "connector_type": vehicle.connector_type,
+            "battery_capacity_kwh": vehicle.battery_capacity_kwh,
+            "current_battery_percent": vehicle.current_battery_percent,
+            "full_range_km": vehicle.full_range_km
+        }
+    }), 200
+
+
+@main.route("/api/vehicle-profile", methods=["PUT"])
+@login_required
+def save_vehicle_profile():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "Invalid request body"}), 400
+
+    connector_type = data.get("connector_type")
+    if not isinstance(connector_type, str) or connector_type not in VEHICLE_CONNECTOR_TYPES:
+        return jsonify({"message": "Select a supported charging connector"}), 400
+
+    numeric_fields = {
+        "battery_capacity_kwh": (1, 300, "Battery capacity must be between 1 and 300 kWh"),
+        "current_battery_percent": (0, 100, "Battery level must be between 0% and 100%"),
+        "full_range_km": (1, 2000, "Full-charge range must be between 1 and 2000 km")
+    }
+    values = {}
+
+    for field, (minimum, maximum, message) in numeric_fields.items():
+        value = data.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return jsonify({"message": message}), 400
+        if not minimum <= value <= maximum:
+            return jsonify({"message": message}), 400
+        values[field] = value
+
+    vehicle = VehicleProfile.query.filter_by(user_id=g.user.id).first()
+    if vehicle is None:
+        vehicle = VehicleProfile(user_id=g.user.id)
+        db.session.add(vehicle)
+
+    vehicle.connector_type = connector_type
+    vehicle.battery_capacity_kwh = values["battery_capacity_kwh"]
+    vehicle.current_battery_percent = values["current_battery_percent"]
+    vehicle.full_range_km = values["full_range_km"]
+    db.session.commit()
+
+    return jsonify({
+        "message": "Vehicle profile saved",
+        "vehicle": {
+            "connector_type": vehicle.connector_type,
+            "battery_capacity_kwh": vehicle.battery_capacity_kwh,
+            "current_battery_percent": vehicle.current_battery_percent,
+            "full_range_km": vehicle.full_range_km
+        }
+    }), 200
 
 
 @main.route("/api/stations", methods=["GET"])
