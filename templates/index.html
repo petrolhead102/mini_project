@@ -149,6 +149,17 @@
 
       <!-- Interactive Map Panel -->
       <div class="map-panel">
+        <div class="map-location-controls">
+          <button class="btn btn-outline" id="locate-me-btn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <span>Use my location</span>
+          </button>
+          <div class="location-search-form" id="location-autocomplete" aria-label="Search for a city in India"></div>
+          <p id="location-status" role="status" aria-live="polite">Use GPS or search for a city such as Coimbatore.</p>
+        </div>
         <div id="map" aria-label="Interactive Station Map"></div>
       </div>
 

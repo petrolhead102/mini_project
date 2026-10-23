@@ -624,6 +624,55 @@ main.dashboard-container {
   background-color: var(--bg-dark);
 }
 
+.map-location-controls {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 5;
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  max-width: calc(100% - 2rem);
+}
+
+.map-location-controls .btn {
+  background: rgba(7, 10, 19, 0.92);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+.map-location-controls .btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.location-search-form {
+  display: flex;
+  width: min(340px, calc(100vw - 3rem));
+  gap: 0.4rem;
+}
+
+.location-search-form gmp-place-autocomplete {
+  display: block;
+  width: 100%;
+  color-scheme: dark;
+}
+
+#location-status {
+  max-width: 320px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--border-glass);
+  border-radius: 6px;
+  background: rgba(7, 10, 19, 0.92);
+  color: var(--text-main);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.pac-container {
+  z-index: 110;
+}
+
 /* Dark Theme Overrides for Leaflet Map */
 .leaflet-container {
   font-family: var(--font-sans) !important;

@@ -26,7 +26,7 @@ def get_stations():
     if not api_key:
         return jsonify({"message": "Google Maps API key not configured"}), 500
 
-    url = "https://places.googleapis.com/v1/places:searchText"
+    url = "https://places.googleapis.com/v1/places:searchNearby"
 
     headers = {
         "Content-Type": "application/json",
@@ -44,15 +44,16 @@ def get_stations():
     }
 
     body = {
-        "textQuery": "EV charging station",
+        "includedTypes": ["electric_vehicle_charging_station"],
         "maxResultCount": 20,
-        "locationBias": {
+        "rankPreference": "DISTANCE",
+        "locationRestriction": {
             "circle": {
                 "center": {
                     "latitude": lat,
                     "longitude": lng
                 },
-                "radius": 10000.0
+                "radius": 5000.0
             }
         }
     }
@@ -75,23 +76,6 @@ def get_stations():
         }), 500
 
     places = data.get("places", [])
-
-    # Keep only EV charging stations if Google provides type information.
-    filtered_places = []
-
-    for place in places:
-        types = place.get("types", [])
-
-        if (
-            "electric_vehicle_charging_station" in types
-            or place.get("primaryType") == "electric_vehicle_charging_station"
-        ):
-            filtered_places.append(place)
-
-    # If Google didn't classify any places correctly,
-    # fall back to all text search results.
-    if filtered_places:
-        places = filtered_places
 
     stations = []
 

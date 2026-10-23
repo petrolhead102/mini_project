@@ -13,6 +13,9 @@ const state = {
   userReservations: {}, // Keep track of simulated client-side reservations: { stationId: expiresTimestamp }
   map: null,
   infoWindow: null,
+  currentLocation: null,
+  currentLocationLabel: "your location",
+  userLocationMarker: null,
   markers: {} // Map station.id -> google.maps.Marker
 };
 
@@ -20,44 +23,139 @@ const state = {
 document.addEventListener("DOMContentLoaded", () => {
   initAuth();
   initMap();
-
-  if ("geolocation" in navigator) {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        if (state.map) {
-          state.map.setCenter({ lat: parseFloat(lat), lng: parseFloat(lng) });
-        }
-        fetchStations(lat, lng);
-      },
-      (error) => {
-        console.warn("Geolocation denied or error. Using default location.", error);
-        fetchStations(37.7749, -122.4194);
-      }
-    );
-  } else {
-    fetchStations(37.7749, -122.4194);
-  }
-
   setupEventListeners();
 });
 
 async function fetchStations(lat, lng) {
   try {
-    const response = await fetch(`/api/stations?lat=${lat}&lng=${lng}`);
-    if (response.ok) {
-      const data = await response.json();
-      state.stations = data;
-      renderStats();
-      renderStationsList();
-      renderMapMarkers();
-    } else {
-      showToast("Failed to fetch charging stations.", "error");
+    const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+    const response = await fetch(`/api/stations?${params}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || "Failed to fetch charging stations.");
     }
+
+    state.stations = data;
+    renderStats();
+    renderStationsList();
+    renderMapMarkers();
+    const area = state.currentLocationLabel;
+    document.getElementById("location-status").textContent = data.length
+      ? `Showing ${data.length} charging stations near ${area}.`
+      : `No charging stations found near ${area}.`;
   } catch (error) {
     console.error("Error fetching stations:", error);
-    showToast("Network error fetching stations.", "error");
+    document.getElementById("location-status").textContent = error.message;
+    showToast(error.message || "Network error fetching stations.", "error");
+  }
+}
+
+function locateUser() {
+  const button = document.getElementById("locate-me-btn");
+  const status = document.getElementById("location-status");
+
+  if (!navigator.geolocation) {
+    status.textContent = "Location is not supported by this browser.";
+    return;
+  }
+
+  button.disabled = true;
+  status.textContent = "Requesting your location...";
+
+  navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+    const location = { lat: coords.latitude, lng: coords.longitude };
+    await showLocation(location, "your location");
+    button.disabled = false;
+  }, error => {
+    const messages = {
+      1: "Location access was denied. Allow it in your browser's site settings, then try again.",
+      2: "Your location could not be determined. Check that location services are enabled.",
+      3: "The location request timed out. Try again."
+    };
+
+    status.textContent = messages[error.code] || "Could not access your location. Try again.";
+    button.disabled = false;
+  }, {
+    enableHighAccuracy: true,
+    timeout: 15000,
+    maximumAge: 60000
+  });
+}
+
+async function showLocation(location, label) {
+  state.currentLocation = location;
+  state.currentLocationLabel = label;
+
+  if (state.map) {
+    state.map.setCenter(location);
+    state.map.setZoom(14);
+
+    if (state.userLocationMarker) {
+      state.userLocationMarker.setPosition(location);
+      state.userLocationMarker.setTitle(label === "your location" ? "Your location" : label);
+    } else {
+      state.userLocationMarker = new google.maps.Marker({
+        map: state.map,
+        position: location,
+        title: label === "your location" ? "Your location" : label,
+        zIndex: google.maps.Marker.MAX_ZINDEX + 1,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 9,
+          fillColor: "#2563eb",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 3
+        }
+      });
+    }
+  }
+
+  document.getElementById("location-status").textContent =
+    `Searching for charging stations near ${label}...`;
+  await fetchStations(location.lat, location.lng);
+}
+
+async function setupLocationSearch() {
+  const container = document.getElementById("location-autocomplete");
+  const status = document.getElementById("location-status");
+
+  try {
+    const { PlaceAutocompleteElement } = await google.maps.importLibrary("places");
+    const autocomplete = new PlaceAutocompleteElement({
+      includedRegionCodes: ["in"]
+    });
+    autocomplete.placeholder = "Search a city in India...";
+    autocomplete.classList.add("place-autocomplete");
+    container.replaceChildren(autocomplete);
+
+    autocomplete.addEventListener("gmp-select", async ({ placePrediction }) => {
+      try {
+        const place = placePrediction.toPlace();
+        await place.fetchFields({
+          fields: ["location", "formattedAddress", "displayName"]
+        });
+
+        if (!place.location) {
+          status.textContent = "That place has no searchable map location.";
+          return;
+        }
+
+        const location = {
+          lat: place.location.lat(),
+          lng: place.location.lng()
+        };
+        const label = place.formattedAddress || place.displayName?.text || "selected area";
+        await showLocation(location, label);
+      } catch (error) {
+        console.error("Place search failed:", error);
+        status.textContent = "Could not search that place. Try selecting it again.";
+      }
+    });
+  } catch (error) {
+    console.error("Place search setup failed:", error);
+    status.textContent = "Location search is unavailable. Check the Google Places API configuration.";
   }
 }
 
@@ -465,6 +563,9 @@ function cancelReservation(event, stationId) {
 
 // Filters & Event Listeners setup
 function setupEventListeners() {
+  document.getElementById("locate-me-btn").addEventListener("click", locateUser);
+  setupLocationSearch();
+
   // Search Input
   const searchInput = document.getElementById("search-input");
   searchInput.addEventListener("input", (e) => {
