@@ -6,10 +6,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description"
-    content="Locate, track, and reserve electric vehicle (EV) charging stations in real-time. Features interactive map search, fast charger filtering, and booking management.">
-  <title>VoltRoute | EV Charging Station Finder</title>
-
-  <!-- Custom Styling -->
+    content="Intelligent EV Charging Slot Allocation System with reachability filtering, charging urgency scoring, ARIMA congestion forecasting, and min-cost flow optimization.">
+  <title>VoltRoute | Intelligent EV Charging Allocation System</title>
 
   <!-- Custom Styling -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
@@ -26,12 +24,19 @@
         </svg>
       </div>
       <span class="logo-text">Volt<span class="logo-accent">Route</span></span>
+      <span class="system-badge" title="Intelligent Recommendation System Active">AI Allocation</span>
     </a>
 
     <nav aria-label="Main Navigation">
-      <a href="/" class="nav-link active" id="nav-home">Home</a>
-      <a href="#" class="nav-link" id="nav-explore">Explore</a>
-      <a href="#" class="nav-link" id="nav-support">Support</a>
+      <a href="#" class="nav-link active" id="nav-mode-recommend">Smart Recommendation</a>
+      <a href="#" class="nav-link" id="nav-mode-discovery">All Stations</a>
+      <a href="#" class="nav-link" id="nav-btn-fleet">Fleet Min-Cost Flow</a>
+      <a href="#" class="nav-link" id="nav-btn-rewards">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        Rewards <span class="rewards-pill" id="header-points-pill">0 pts</span>
+      </a>
     </nav>
 
     <div class="auth-panel" id="auth-panel">
@@ -44,11 +49,120 @@
   <!-- Dashboard Container -->
   <main class="dashboard-container">
 
+    <!-- Feature 1: EV Battery and Range Input Bar -->
+    <section class="ev-input-card" aria-label="EV Battery & Range Inputs" id="ev-input-section">
+      <div class="ev-input-header">
+        <div class="section-title-wrap">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="6" width="18" height="12" rx="2"></rect>
+            <path d="M23 13v-2"></path>
+            <polyline points="11 9 7 14 13 14 9 19"></polyline>
+          </svg>
+          <span class="section-title">EV Status & Range Configuration</span>
+        </div>
+        <div class="safe-range-pill" id="safe-range-display" title="Computed as Remaining Range x (1 - Safety Margin %)">
+          Safe Reachable Range: <strong id="safe-range-val">51.0 km</strong>
+        </div>
+      </div>
+
+      <div class="ev-inputs-grid">
+        <!-- Battery Percentage -->
+        <div class="input-field-group">
+          <div class="label-with-val">
+            <label for="input-battery-pct">Battery State of Charge</label>
+            <span class="live-input-val" id="lbl-battery-pct">35%</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="input-battery-pct" min="1" max="100" value="35" class="range-slider">
+          </div>
+        </div>
+
+        <!-- Remaining Range -->
+        <div class="input-field-group">
+          <label for="input-range-km">Remaining Range (km)</label>
+          <input type="number" id="input-range-km" min="1" max="800" value="60" class="form-input-sm"
+            placeholder="e.g. 60 km">
+        </div>
+
+        <!-- Connector Type -->
+        <div class="input-field-group">
+          <label for="select-connector">EV Connector Type</label>
+          <select id="select-connector" class="form-select-sm">
+            <option value="all">Any Compatible Plug</option>
+            <option value="CCS">CCS (Combined Charging)</option>
+            <option value="Tesla NACS">Tesla NACS</option>
+            <option value="CHAdeMO">CHAdeMO</option>
+            <option value="J1772">J1772 (Level 2 AC)</option>
+          </select>
+        </div>
+
+        <!-- Action Button -->
+        <div class="input-field-group action-group">
+          <button class="btn btn-primary btn-run-rec" id="btn-run-recommendation">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            Compute Recommendations
+          </button>
+        </div>
+      </div>
+
+      <!-- Collapsible Advanced Settings -->
+      <details class="advanced-ev-details" id="advanced-ev-panel">
+        <summary class="advanced-summary">Advanced EV Specs & Safety Margin</summary>
+        <div class="advanced-grid">
+          <div class="input-field-group">
+            <label for="input-capacity-kwh">Battery Capacity (kWh)</label>
+            <input type="number" id="input-capacity-kwh" value="60" min="10" max="250" step="1" class="form-input-sm">
+          </div>
+          <div class="input-field-group">
+            <label for="input-efficiency">Efficiency (km/kWh)</label>
+            <input type="number" id="input-efficiency" value="5.5" min="1" max="12" step="0.1" class="form-input-sm">
+          </div>
+          <div class="input-field-group">
+            <div class="label-with-val">
+              <label for="input-safety-margin">Safety Margin</label>
+              <span class="live-input-val" id="lbl-safety-margin">15%</span>
+            </div>
+            <input type="range" id="input-safety-margin" min="5" max="30" value="15" class="range-slider">
+          </div>
+          <div class="input-field-group">
+            <label for="input-location-display">Vehicle Coordinates</label>
+            <div class="coords-badge" id="vehicle-coords-display">37.7749° N, -122.4194° W</div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- Feature 4: Charging Urgency & Diagnosis Banner -->
+    <section class="urgency-banner" id="urgency-banner" style="display: none;" aria-label="Charging Urgency Diagnosis">
+      <div class="urgency-badge-wrap">
+        <span class="urgency-level-pill" id="urgency-level-badge">Urgency</span>
+        <div class="urgency-score-meter">
+          <span class="meter-text">Urgency Score:</span>
+          <strong id="urgency-score-val">0</strong>/100
+        </div>
+      </div>
+      <div class="urgency-message-wrap">
+        <div class="urgency-explanation" id="urgency-explanation-text">...</div>
+      </div>
+    </section>
+
+    <!-- Range / Safety Warning Alert -->
+    <div class="alert-warning-box" id="global-warning-box" style="display: none;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+      <div id="global-warning-text">No suitable charging stations found within the vehicle's safe range.</div>
+    </div>
+
     <!-- Stats Banner -->
     <section class="stats-panel" aria-label="Overview Metrics">
       <div class="stat-card blue">
         <div class="stat-info">
-          <span class="stat-label">Total Stations</span>
+          <span class="stat-label">Reachable Stations</span>
           <span class="stat-value" id="stat-total">0</span>
         </div>
         <div class="stat-icon-wrapper">
@@ -80,8 +194,8 @@
 
       <div class="stat-card orange">
         <div class="stat-info">
-          <span class="stat-label">Currently Occupied</span>
-          <span class="stat-value" id="stat-inuse">0</span>
+          <span class="stat-label">Predicted Wait (Top #1)</span>
+          <span class="stat-value" id="stat-inuse">0 min</span>
         </div>
         <div class="stat-icon-wrapper">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -92,7 +206,7 @@
 
       <div class="stat-card rose">
         <div class="stat-info">
-          <span class="stat-label">Offline / Maintenance</span>
+          <span class="stat-label">Excluded / Unreachable</span>
           <span class="stat-value" id="stat-offline">0</span>
         </div>
         <div class="stat-icon-wrapper">
@@ -118,7 +232,7 @@
                 d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
             </svg>
             <input type="text" class="search-input" id="search-input"
-              placeholder="Search by station name or address...">
+              placeholder="Filter stations by name or address...">
           </div>
 
           <div class="filters-container">
@@ -142,9 +256,25 @@
 
         </div>
 
+        <!-- Recommended Station Showcase (Rendered when in recommendation mode) -->
+        <div class="recommendation-showcase" id="recommendation-showcase" style="display: none;">
+          <!-- Dynamically filled by app.js -->
+        </div>
+
+        <div class="stations-list-title" id="stations-list-title">Ranked Suitable Stations</div>
         <div class="stations-list" id="stations-list">
           <!-- Rendered dynamically by app.js -->
         </div>
+
+        <!-- Excluded / Unreachable Stations Drawer -->
+        <details class="unreachable-drawer" id="unreachable-drawer" style="display: none;">
+          <summary class="unreachable-summary" id="unreachable-summary-btn">
+            Excluded Unreachable / Incompatible Stations (<span id="unreachable-count-badge">0</span>)
+          </summary>
+          <div class="unreachable-list" id="unreachable-list">
+            <!-- Dynamically populated -->
+          </div>
+        </details>
       </div>
 
       <!-- Interactive Map Panel -->
@@ -154,6 +284,86 @@
 
     </section>
   </main>
+
+  <!-- Multi-Vehicle Fleet Allocation Modal (Feature 7: Min-Cost Flow) -->
+  <div class="modal-overlay" id="fleet-modal">
+    <div class="modal-container fleet-modal-box" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title">
+      <button class="modal-close" aria-label="Close modal" id="btn-close-fleet">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div class="modal-header">
+        <div class="fleet-icon-badge">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+        </div>
+        <div>
+          <h2 class="modal-title" id="fleet-modal-title">Multi-Vehicle Fleet Slot Allocation</h2>
+          <p class="modal-desc">Network Simplex Min-Cost Flow global optimization for EV fleets</p>
+        </div>
+      </div>
+
+      <div class="fleet-config-intro">
+        Solves multi-EV simultaneous assignment as a bipartite network flow. Respects individual battery ranges, connector compatibility, and station plug capacities while prioritizing high-urgency vehicles.
+      </div>
+
+      <div class="fleet-actions-bar">
+        <button class="btn btn-primary" id="btn-run-fleet-optimization">Run Min-Cost Flow Allocation</button>
+        <button class="btn btn-outline" id="btn-reset-fleet-demo">Load Sample Fleet (3 EVs)</button>
+      </div>
+
+      <div class="fleet-results-container" id="fleet-results-container">
+        <!-- Results rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Rewards Ledger Modal (Feature 8) -->
+  <div class="modal-overlay" id="rewards-modal">
+    <div class="modal-container rewards-modal-box" role="dialog" aria-modal="true" aria-labelledby="rewards-modal-title">
+      <button class="modal-close" aria-label="Close modal" id="btn-close-rewards">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div class="modal-header">
+        <div class="reward-icon-badge">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </div>
+        <div>
+          <h2 class="modal-title" id="rewards-modal-title">Incentive Rewards Ledger</h2>
+          <p class="modal-desc">Points earned by choosing less congested charging stations</p>
+        </div>
+      </div>
+
+      <div class="rewards-summary-cards">
+        <div class="reward-stat-card">
+          <span class="reward-stat-label">Verified Points</span>
+          <span class="reward-stat-value green" id="rewards-verified-val">0</span>
+        </div>
+        <div class="reward-stat-card">
+          <span class="reward-stat-label">Pending / Estimated</span>
+          <span class="reward-stat-value orange" id="rewards-estimated-val">0</span>
+        </div>
+      </div>
+
+      <div class="rewards-history-title">Transaction History</div>
+      <div class="rewards-list" id="rewards-history-list">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
 
   <!-- Login Modal -->
   <div class="modal-overlay" id="login-modal">
@@ -167,7 +377,7 @@
 
       <div class="modal-header">
         <h2 class="modal-title" id="login-title">Welcome Back</h2>
-        <p class="modal-desc">Sign in to your account to reserve chargers</p>
+        <p class="modal-desc">Sign in to your account to reserve chargers and save reward points</p>
       </div>
 
       <form id="login-form">
@@ -243,7 +453,7 @@
 
   <!-- Footer -->
   <footer class="app-footer">
-    <p>&copy; 2026 VoltRoute. All rights reserved.</p>
+    <p>&copy; 2026 VoltRoute. Intelligent EV Charging Slot Allocation System. Multi-Vehicle Flow & Time-Series Engine.</p>
   </footer>
 
   <!-- Google Maps JavaScript API -->
