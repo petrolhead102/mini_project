@@ -17,7 +17,7 @@ class Config:
 
     SESSION_COOKIE_SAMESITE = "Lax"
 
-    # Enable this when using HTTPS
+    # Enable this when using HTTPSkj
     SESSION_COOKIE_SECURE = False
 
     # Configurable EV & Recommendation Defaults
