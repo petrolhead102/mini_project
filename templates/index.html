@@ -6,7 +6,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description"
-    content="Locate, track, and reserve electric vehicle (EV) charging stations in real-time. Features interactive map search, fast charger filtering, and booking management.">
+    content="Find nearby electric vehicle charging stations, compare availability, and filter by charger type on an interactive map.">
   <title>VoltRoute | EV Charging Station Finder</title>
 
   <!-- Custom Styling -->
@@ -29,8 +29,12 @@
     </a>
 
     <nav aria-label="Main Navigation">
-      <a href="/" class="nav-link active" id="nav-home">Home</a>
-      <a href="#" class="nav-link" id="nav-explore">Explore</a>
+      <a href="#map" class="nav-link active" id="nav-home">Map</a>
+      <a href="#stations" class="nav-link" id="nav-stations">Stations</a>
+      <span class="vehicle-nav-item">
+        <button class="nav-link nav-button" id="nav-vehicle" type="button">My EV</button>
+        <span class="vehicle-profile-status" id="vehicle-profile-status">Not set up</span>
+      </span>
       <a href="#" class="nav-link" id="nav-support">Support</a>
     </nav>
 
@@ -48,7 +52,7 @@
     <section class="stats-panel" aria-label="Overview Metrics">
       <div class="stat-card blue">
         <div class="stat-info">
-          <span class="stat-label">Total Stations</span>
+          <span class="stat-label">Charging Stations</span>
           <span class="stat-value" id="stat-total">0</span>
         </div>
         <div class="stat-icon-wrapper">
@@ -80,7 +84,7 @@
 
       <div class="stat-card orange">
         <div class="stat-info">
-          <span class="stat-label">Currently Occupied</span>
+          <span class="stat-label">In-use Stations</span>
           <span class="stat-value" id="stat-inuse">0</span>
         </div>
         <div class="stat-icon-wrapper">
@@ -92,7 +96,7 @@
 
       <div class="stat-card rose">
         <div class="stat-info">
-          <span class="stat-label">Offline / Maintenance</span>
+          <span class="stat-label">Offline Stations</span>
           <span class="stat-value" id="stat-offline">0</span>
         </div>
         <div class="stat-icon-wrapper">
@@ -105,20 +109,78 @@
       </div>
     </section>
 
-    <!-- Workspace Panel: Station List and Interactive Map -->
-    <section class="app-workspace" aria-label="Station Finder Interface">
-
-      <!-- Sidebar panel with list -->
-      <div class="sidebar-panel">
-        <div class="sidebar-header">
-
-          <div class="search-wrapper">
-            <svg viewBox="0 0 24 24">
-              <path
-                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+    <!-- Full-width interactive map -->
+    <section class="app-workspace page-view map-page" id="map-page" aria-label="Station map">
+      <!-- Interactive Map Panel -->
+      <div class="map-panel">
+        <section class="location-picker" aria-labelledby="location-picker-title">
+          <div class="location-picker-copy">
+            <h2 id="location-picker-title">Find charging stations</h2>
+            <p>Use your current location or search for a city or address.</p>
+          </div>
+          <button class="btn btn-outline" id="locate-me-btn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
             </svg>
-            <input type="text" class="search-input" id="search-input"
-              placeholder="Search by station name or address...">
+            <span>Use my current location</span>
+          </button>
+          <div class="location-search-form" id="location-autocomplete" aria-label="Search for a location"></div>
+          <p id="location-status" role="status" aria-live="polite">Choose an option above to find nearby charging stations.</p>
+        </section>
+        <div id="map" aria-label="Interactive Station Map"></div>
+        <section class="map-route-summary" id="map-route-summary" aria-live="polite" aria-label="Selected station driving route" hidden>
+          <div class="map-route-heading">
+            <span class="map-route-icon" aria-hidden="true">↗</span>
+            <div class="map-route-title">Driving route</div>
+          </div>
+          <div class="map-route-distance" id="map-route-distance"></div>
+          <div class="map-route-details" id="map-route-details"></div>
+        </section>
+        <div class="map-recommendation-legend" id="map-recommendation-legend" aria-label="Map marker legend" hidden>
+          <div class="map-legend-title">Station map</div>
+          <div class="map-legend-item">
+            <span class="map-legend-marker available" aria-hidden="true"></span>
+            <span>Available</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="map-legend-marker charging" aria-hidden="true"></span>
+            <span>In use</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="map-legend-marker offline" aria-hidden="true"></span>
+            <span>Offline</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="map-legend-marker within-range" aria-hidden="true"></span>
+            <span>Within estimated range</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="map-legend-marker priority-top-three" aria-hidden="true">1–3</span>
+            <span>Top 3 priority routes</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dedicated station directory -->
+    <section class="stations-page page-view" id="stations-page" aria-labelledby="stations-page-title" hidden>
+      <div class="stations-page-heading">
+        <div>
+          <p class="eyebrow">Charging network</p>
+          <h1 id="stations-page-title">Stations</h1>
+          <p class="stations-page-description">Compare nearby chargers, availability, range, and priority at a glance.</p>
+        </div>
+        <button class="btn btn-outline" id="stations-map-button" type="button">Choose location on map</button>
+      </div>
+
+      <div class="stations-directory">
+        <div class="sidebar-header stations-filters">
+          <div class="search-wrapper">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+            </svg>
+            <input type="text" class="search-input" id="search-input" placeholder="Search stations by name or address">
           </div>
 
           <div class="filters-container">
@@ -132,28 +194,71 @@
           </div>
 
           <div class="filters-container">
-            <div class="filter-group-label">Charger Speed</div>
+            <div class="filter-group-label">Charger type</div>
             <div class="filter-chips" id="type-filters">
-              <button class="chip active" data-type="all" id="chip-type-all">All Speeds</button>
+              <button class="chip active" data-type="all" id="chip-type-all">All types</button>
               <button class="chip" data-type="DC Fast" id="chip-type-fast">DC Fast</button>
               <button class="chip" data-type="Level 2" id="chip-type-lvl2">Level 2</button>
             </div>
           </div>
-
         </div>
 
+        <section class="range-recommendation" id="range-recommendation" aria-live="polite" aria-label="EV range recommendations"></section>
         <div class="stations-list" id="stations-list">
           <!-- Rendered dynamically by app.js -->
         </div>
       </div>
-
-      <!-- Interactive Map Panel -->
-      <div class="map-panel">
-        <div id="map" aria-label="Interactive Station Map"></div>
-      </div>
-
     </section>
   </main>
+
+  <!-- Vehicle Profile Modal -->
+  <div class="modal-overlay" id="vehicle-modal">
+    <div class="modal-container vehicle-modal-container" role="dialog" aria-modal="true" aria-labelledby="vehicle-title">
+      <button class="modal-close" aria-label="Close vehicle profile" id="btn-close-vehicle">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+
+      <div class="modal-header">
+        <h2 class="modal-title" id="vehicle-title">Your EV profile</h2>
+        <p class="modal-desc">Add your vehicle details to see which nearby stations are within your estimated range.</p>
+      </div>
+
+      <form id="vehicle-form">
+        <div class="form-message" id="vehicle-error-msg" role="alert"></div>
+
+        <div class="form-group">
+          <label for="vehicle-connector" class="form-label">Charging connector</label>
+          <select id="vehicle-connector" class="form-input" required>
+            <option value="">Choose a connector</option>
+            <option value="CCS">CCS</option>
+            <option value="CHAdeMO">CHAdeMO</option>
+            <option value="J1772">J1772</option>
+            <option value="Tesla NACS">Tesla NACS</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="vehicle-capacity" class="form-label">Battery capacity (kWh)</label>
+          <input type="number" id="vehicle-capacity" class="form-input" required min="1" max="300" step="0.1" placeholder="e.g. 75">
+        </div>
+
+        <div class="form-group">
+          <label for="vehicle-battery" class="form-label">Current battery level (%)</label>
+          <input type="number" id="vehicle-battery" class="form-input" required min="0" max="100" step="1" placeholder="e.g. 40">
+        </div>
+
+        <div class="form-group">
+          <label for="vehicle-range" class="form-label">Estimated range at full charge (km)</label>
+          <input type="number" id="vehicle-range" class="form-input" required min="1" max="2000" step="1" placeholder="e.g. 420">
+        </div>
+
+        <button type="submit" class="btn btn-primary vehicle-submit" id="btn-save-vehicle">Save vehicle</button>
+      </form>
+    </div>
+  </div>
 
   <!-- Login Modal -->
   <div class="modal-overlay" id="login-modal">
@@ -225,7 +330,7 @@
         <div class="form-group">
           <label for="register-password" class="form-label">Password</label>
           <input type="password" id="register-password" class="form-input" required placeholder="Create secure password"
-            minlength="6">
+            minlength="8">
         </div>
 
         <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;"
@@ -247,6 +352,16 @@
   </footer>
 
   <!-- Google Maps JavaScript API -->
+  <script>
+    window.gm_authFailure = function () {
+      console.error("Google Maps authorization failed. Check Maps JavaScript API access, billing, and HTTP referrer restrictions in Google Cloud.");
+      const status = document.getElementById("location-status");
+      if (status) {
+        status.textContent = "Google Maps could not authorize this key. Check Maps JavaScript API, billing, and local-site referrer access in Google Cloud.";
+        status.dataset.state = "error";
+      }
+    };
+  </script>
   <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_key }}&libraries=places"></script>
 
   <!-- Custom Logic -->

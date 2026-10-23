@@ -55,3 +55,34 @@ class Session(db.Model):
 
     user = db.relationship(User)
 
+
+class VehicleProfile(db.Model):
+    __tablename__ = "vehicle_profiles"
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        primary_key=True
+    )
+
+    connector_type = db.Column(
+        db.String(30),
+        nullable=False
+    )
+
+    battery_capacity_kwh = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    current_battery_percent = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    full_range_km = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    user = db.relationship(User)
