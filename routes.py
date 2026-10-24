@@ -1,5 +1,6 @@
 import math
 import random
+import time
 
 from flask import Blueprint, jsonify, g, request, current_app
 import requests
@@ -9,6 +10,9 @@ from database import db
 from models import VehicleProfile
 
 main = Blueprint("main", __name__)
+STATION_CACHE_TTL_SECONDS = 300
+STATION_CACHE_MAX_ENTRIES = 100
+station_cache = {}
 
 VEHICLE_CONNECTOR_TYPES = {
     "CCS",
@@ -95,8 +99,17 @@ def save_vehicle_profile():
 
 @main.route("/api/stations", methods=["GET"])
 def get_stations():
-    lat = float(request.args.get("lat", 37.7749))
-    lng = float(request.args.get("lng", -122.4194))
+    # Match the app's initial map center when no location was submitted.
+    lat = float(request.args.get("lat", 11.0168))
+    lng = float(request.args.get("lng", 76.9558))
+
+    # Browser GPS can drift slightly between clicks or reloads. Reuse nearby
+    # Places results for five minutes instead of billing for each repeat search.
+    cache_key = (round(lat, 2), round(lng, 2))
+    now = time.monotonic()
+    cached = station_cache.get(cache_key)
+    if cached and now - cached[0] < STATION_CACHE_TTL_SECONDS:
+        return jsonify(cached[1])
 
     api_key = current_app.config.get("GOOGLE_MAPS_KEY")
     if not api_key:
@@ -194,7 +207,7 @@ def get_stations():
                 "J1772",
                 "Tesla NACS"
             ]),
-            "price": round(rng.uniform(0.15, 0.49), 2),
+            "price": round(rng.uniform(12.0, 25.0), 2),
             "amenities": [
                 "Food",
                 "Restrooms"
@@ -206,5 +219,10 @@ def get_stations():
         }
 
         stations.append(station)
+
+    if len(station_cache) >= STATION_CACHE_MAX_ENTRIES:
+        oldest_key = min(station_cache, key=lambda key: station_cache[key][0])
+        station_cache.pop(oldest_key, None)
+    station_cache[cache_key] = (now, stations)
 
     return jsonify(stations)

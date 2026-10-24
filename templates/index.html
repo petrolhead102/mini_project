@@ -31,6 +31,7 @@
     <nav aria-label="Main Navigation">
       <a href="#map" class="nav-link active" id="nav-home">Map</a>
       <a href="#stations" class="nav-link" id="nav-stations">Stations</a>
+      <a href="#algorithm" class="nav-link" id="nav-algorithm">Algorithm Used</a>
       <span class="vehicle-nav-item">
         <button class="nav-link nav-button" id="nav-vehicle" type="button">My EV</button>
         <span class="vehicle-profile-status" id="vehicle-profile-status">Not set up</span>
@@ -137,6 +138,24 @@
           <div class="map-route-distance" id="map-route-distance"></div>
           <div class="map-route-details" id="map-route-details"></div>
         </section>
+        <section class="trip-progress-card" id="trip-progress-card" aria-live="polite" aria-label="Simulated trip progress" hidden>
+          <button class="trip-progress-dismiss" id="trip-progress-dismiss" type="button" aria-label="Dismiss trip progress">×</button>
+          <span class="trip-progress-kicker">SIMULATED DRIVE · DEMO</span>
+          <strong class="trip-progress-title" id="trip-progress-title">Your car is on the way</strong>
+          <p class="trip-progress-message" id="trip-progress-message"></p>
+          <div class="trip-progress-track" aria-hidden="true"><span id="trip-progress-bar"></span></div>
+          <div class="trip-reward-result" id="trip-reward-result" hidden>
+            <strong id="trip-reward-cashback"></strong>
+            <span id="trip-reward-points"></span>
+            <button class="trip-claim-reward-btn" id="trip-claim-reward-btn" type="button">Claim cashback</button>
+          </div>
+          <div class="trip-reward-result algorithm-demo-result" id="algorithm-demo-result" hidden>
+            <strong>Algorithm demo complete</strong>
+            <span id="algorithm-demo-summary"></span>
+            <button class="trip-claim-reward-btn" id="algorithm-demo-return-btn" type="button">Back to Algorithm Used</button>
+          </div>
+          <span class="trip-progress-note" id="trip-progress-note">Trip movement and cashback are simulated (100 points = ₹4.00); no live tracking or payment is connected.</span>
+        </section>
         <div class="map-recommendation-legend" id="map-recommendation-legend" aria-label="Map marker legend" hidden>
           <div class="map-legend-title">Station map</div>
           <div class="map-legend-item">
@@ -157,7 +176,7 @@
           </div>
           <div class="map-legend-item">
             <span class="map-legend-marker priority-top-three" aria-hidden="true">1–3</span>
-            <span>Top 3 priority routes</span>
+            <span>Top 3 reservable choices</span>
           </div>
         </div>
       </div>
@@ -209,7 +228,74 @@
         </div>
       </div>
     </section>
+
+    <section class="algorithm-page page-view" id="algorithm-page" aria-labelledby="algorithm-page-title" hidden>
+      <div class="algorithm-page-heading">
+        <p class="eyebrow">How VoltRoute decides</p>
+        <h1 id="algorithm-page-title">Algorithm Used</h1>
+        <p>See how range, station priority, reported plug availability, and completed trips determine recommendations and demo cashback.</p>
+        <button class="algorithm-demo-button" id="algorithm-demo-button" type="button">Animate the algorithm on the full-screen map</button>
+      </div>
+
+      <div class="algorithm-grid">
+        <article class="algorithm-card algorithm-card-wide">
+          <span class="algorithm-step">01 · Reachable stations</span>
+          <h2>Range filter</h2>
+          <p>We estimate usable range from your EV profile: <strong>full range × battery charge percentage</strong>. A station is reachable when its straight-line distance from your selected location is at or below that estimate. Reachable range is an estimate; actual road distance can be longer.</p>
+        </article>
+
+        <article class="algorithm-card algorithm-card-wide">
+          <span class="algorithm-step">02 · Match score</span>
+          <h2>Priority score out of 100</h2>
+          <p>Reachable stations are scored using four weighted factors. Higher scores rank first; distance breaks ties.</p>
+          <div class="algorithm-score-list">
+            <div><span>Closeness within estimated range</span><strong>40%</strong></div>
+            <div><span>Available plugs as a share of station plugs</span><strong>30%</strong></div>
+            <div><span>Charger speed, scaled to 250 kW</span><strong>20%</strong></div>
+            <div><span>Station rating (50/100 when unavailable)</span><strong>10%</strong></div>
+          </div>
+          <p class="algorithm-footnote">The map highlights the top 3 stations that are in range, available, and have at least one open plug. Offline, busy, out-of-range, or already-reserved stations cannot be reserved or ranked as top choices.</p>
+        </article>
+
+        <article class="algorithm-card">
+          <span class="algorithm-step">03 · Plug status</span>
+          <h2>Congestion estimate</h2>
+          <p><strong>Occupancy = (total plugs − open plugs) ÷ total plugs × 100</strong>.</p>
+          <ul class="algorithm-thresholds">
+            <li><span class="algorithm-status low"></span>Low: under 40% occupied</li>
+            <li><span class="algorithm-status moderate"></span>Moderate: 40–74%</li>
+            <li><span class="algorithm-status high"></span>High: 75% or more</li>
+            <li><span class="algorithm-status offline"></span>Offline: station reports offline</li>
+          </ul>
+          <p class="algorithm-footnote">This uses the plug counts returned for the station. It is an estimate, not continuous live monitoring or a forecast.</p>
+        </article>
+
+        <article class="algorithm-card">
+          <span class="algorithm-step">04 · Trip rewards</span>
+          <h2>Variable cashback points</h2>
+          <p>Cashback is calculated after the simulated drive reaches the reserved station. Only one of the top 3 reservable choices can earn it, and each station can earn cashback once per session.</p>
+          <div class="algorithm-formula">Points = round(8 + score × 0.35 + open-plug % × 0.12)</div>
+          <p>Cashback = <strong>points × ₹0.04</strong> (100 points = ₹4). A higher match score and more open plugs produce a larger reward. Claiming adds the points to your in-session total.</p>
+          <div class="algorithm-balance">Claimed this session: <strong id="algorithm-reward-balance">0 points</strong></div>
+          <p class="algorithm-footnote">If you reserve a lower-ranked station while a top-3 option was available, the arrival screen says “No cashback this trip” and explains why. Rewards and trip movement are demo-only; no payment is made.</p>
+        </article>
+      </div>
+    </section>
   </main>
+
+  <div class="modal-overlay" id="reservation-confirm-modal">
+    <section class="modal-container reservation-confirm-container" role="dialog" aria-modal="true" aria-labelledby="reservation-confirm-title" aria-describedby="reservation-confirm-description">
+      <div class="modal-header">
+        <h2 class="modal-title" id="reservation-confirm-title">Confirm reservation</h2>
+        <p class="modal-desc" id="reservation-confirm-description">Reserve a charging slot and start the demo trip to:</p>
+      </div>
+      <p class="reservation-confirm-station" id="reservation-confirm-station"></p>
+      <div class="reservation-confirm-actions">
+        <button class="reservation-cancel-btn" id="reservation-cancel-btn" type="button">Cancel</button>
+        <button class="reservation-confirm-btn" id="reservation-confirm-btn" type="button">Confirm</button>
+      </div>
+    </section>
+  </div>
 
   <!-- Vehicle Profile Modal -->
   <div class="modal-overlay" id="vehicle-modal">

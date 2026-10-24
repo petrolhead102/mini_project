@@ -13,8 +13,12 @@ const state = {
   },
   stations: [], // Data will be fetched from the backend dynamically
   userReservations: {}, // Keep track of simulated client-side reservations: { stationId: expiresTimestamp }
+  pendingReservations: {},
+  confirmingReservationStationId: null,
+  pendingReservationDecision: null,
+  pendingTripReward: null,
   rewardPoints: 0,
-  rewardedStationKeys: {},
+  completedTripKeys: {},
   map: null,
   infoWindow: null,
   currentLocation: null,
@@ -25,8 +29,14 @@ const state = {
   rangeCircle: null,
   routePolylines: [],
   rangeRoutePolylines: [],
-  rangeRouteRequestId: 0,
-  routeRequestId: 0
+  routeCache: new Map(),
+  routeRequestId: 0,
+  tripAnimationFrame: null,
+  tripMarker: null,
+  tripPolyline: null,
+  activeTripStationId: null,
+  algorithmDemoActive: false,
+  algorithmDemoRankedCount: 0
 };
 
 // Initialize App
@@ -81,8 +91,18 @@ function locateUser() {
   status.textContent = "Requesting your location...";
 
   navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+    if (!Number.isFinite(coords.latitude) || !Number.isFinite(coords.longitude)) {
+      status.textContent = "Your browser returned an invalid location. Search for Coimbatore or try again.";
+      button.disabled = false;
+      return;
+    }
+
     const location = { lat: coords.latitude, lng: coords.longitude };
     await showLocation(location, "your location");
+    if (Number.isFinite(coords.accuracy) && coords.accuracy > 5000) {
+      const accuracyKm = (coords.accuracy / 1000).toFixed(1);
+      status.textContent += ` Browser location accuracy is about ${accuracyKm} km; search for Coimbatore if the pin is misplaced.`;
+    }
     button.disabled = false;
   }, error => {
     const messages = {
@@ -95,8 +115,8 @@ function locateUser() {
     button.disabled = false;
   }, {
     enableHighAccuracy: true,
-    timeout: 15000,
-    maximumAge: 60000
+    timeout: 30000,
+    maximumAge: 0
   });
 }
 
@@ -353,19 +373,37 @@ function getStationPriorityScore(station) {
   );
 }
 
+function isStationReservable(station) {
+  return station.status === "available" && Number(station.availablePlugs) > 0 &&
+    !state.userReservations[station.id] && !state.pendingReservations[station.id];
+}
+
 function getTopPriorityStations() {
-  return getFilteredStations()
-    .filter(station => isStationWithinEstimatedRange(station) && station.lat != null && station.lng != null)
+  return getRankedReservableStations(getFilteredStations()).slice(0, 3);
+}
+
+function getRankedReservableStations(stations) {
+  return stations
+    .filter(station => isStationReservable(station) && isStationWithinEstimatedRange(station) &&
+      station.lat != null && station.lng != null)
     .sort((first, second) => {
       const scoreDifference = getStationPriorityScore(second) - getStationPriorityScore(first);
       return scoreDifference || getStationDistanceKm(first) - getStationDistanceKm(second);
-    })
-    .slice(0, 3);
+    });
 }
 
 function formatDistance(distanceKm) {
   if (distanceKm < 10) return `${distanceKm.toFixed(1)} km`;
   return `${Math.round(distanceKm)} km`;
+}
+
+function formatINR(amount) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(amount) || 0);
 }
 
 function ensureRangeRecommendationPanel() {
@@ -386,7 +424,7 @@ function ensureRangeRecommendationPanel() {
 
 function getNearestAvailableInRangeStation(rangeKm) {
   return getFilteredStations()
-    .filter(station => station.status === "available" && Number(station.availablePlugs) > 0 &&
+    .filter(station => isStationReservable(station) &&
       getStationDistanceKm(station) !== null && getStationDistanceKm(station) <= rangeKm)
     .sort((first, second) => getStationDistanceKm(first) - getStationDistanceKm(second))[0] || null;
 }
@@ -395,7 +433,7 @@ function getLowerCongestionRewardOffer(rangeKm) {
   if (!state.currentLocation || !state.stationsLoaded) return null;
 
   const availableStations = getFilteredStations()
-    .filter(station => station.status === "available" && Number(station.availablePlugs) > 0 &&
+    .filter(station => isStationReservable(station) &&
       getStationDistanceKm(station) !== null && getStationDistanceKm(station) <= rangeKm)
     .sort((first, second) => getStationDistanceKm(first) - getStationDistanceKm(second));
   const nearest = availableStations[0];
@@ -410,10 +448,8 @@ function getLowerCongestionRewardOffer(rangeKm) {
     const occupancy = capacity
       ? 1 - Math.min(capacity, Number(station.availablePlugs) || 0) / capacity
       : 1;
-    const stationKey = station.place_id || `station-${station.id}`;
-    return { station, occupancy, stationKey };
-  }).filter(option => option.occupancy <= nearestOccupancy - 0.2 &&
-    !state.rewardedStationKeys[option.stationKey]);
+    return { station, occupancy };
+  }).filter(option => option.occupancy <= nearestOccupancy - 0.2);
 
   alternatives.sort((first, second) =>
     first.occupancy - second.occupancy ||
@@ -422,8 +458,7 @@ function getLowerCongestionRewardOffer(rangeKm) {
   const alternative = alternatives[0];
   if (!alternative) return null;
 
-  const points = Math.max(20, Math.round((nearestOccupancy - alternative.occupancy) * 100));
-  return { nearest, ...alternative, points };
+  return { nearest, ...alternative };
 }
 
 function renderRangeRecommendation() {
@@ -512,11 +547,10 @@ function renderRangeRecommendation() {
         <div class="reward-offer" role="status">
           <div class="reward-offer-copy">
             <span class="reward-kicker">Lower-congestion alternative</span>
-            <strong>Earn ${offer.points} reward points</strong>
-            <span>Choose ${offer.station.name} instead of the nearest available station (${offer.nearest.name}). It has lower reported plug occupancy.</span>
-            <span class="reward-balance">Points this session: ${state.rewardPoints}</span>
+            <strong>Consider ${offer.station.name}</strong>
+            <span>It has lower reported plug occupancy than the nearest option (${offer.nearest.name}). Reserve it and complete the trip; cashback depends on its top-3 priority and open plugs.</span>
           </div>
-          <button class="reward-action" type="button" id="btn-reward-station" data-station-id="${offer.station.id}" data-points="${offer.points}">Choose alternative</button>
+          <button class="reward-action" type="button" id="btn-reward-station" data-station-id="${offer.station.id}">View alternative</button>
         </div>
       `;
     }
@@ -645,7 +679,8 @@ function initMap() {
     return;
   }
 
-  const defaultLocation = { lat: 37.7749, lng: -122.4194 };
+  // Keep the initial map useful for this Tamil Nadu focused app until a location is chosen.
+  const defaultLocation = { lat: 11.0168, lng: 76.9558 };
 
   state.map = new google.maps.Map(document.getElementById("map"), {
     zoom: 13,
@@ -704,7 +739,6 @@ function updateRangeCircle() {
 }
 
 async function drawInRangeStationRoutes() {
-  const requestId = ++state.rangeRouteRequestId;
   state.rangeRoutePolylines.forEach(polyline => polyline.setMap(null));
   state.rangeRoutePolylines = [];
 
@@ -715,11 +749,7 @@ async function drawInRangeStationRoutes() {
   );
   if (!stations.length) return;
 
-  const rankedStations = [...stations].sort((first, second) => {
-    const scoreDifference = getStationPriorityScore(second) - getStationPriorityScore(first);
-    return scoreDifference || getStationDistanceKm(first) - getStationDistanceKm(second);
-  });
-  const priorityRanks = new Map(rankedStations.slice(0, 3).map((station, index) => [station.id, index + 1]));
+  const priorityRanks = new Map(getTopPriorityStations().map((station, index) => [station.id, index + 1]));
 
   const routeLines = new Map();
   stations.forEach(station => {
@@ -751,32 +781,8 @@ async function drawInRangeStationRoutes() {
     routeLines.set(station.id, line);
   });
   state.rangeRoutePolylines = [...routeLines.values()];
-
-  try {
-    const { Route } = await google.maps.importLibrary("routes");
-    if (requestId !== state.rangeRouteRequestId) return;
-
-    await Promise.all(stations.map(async station => {
-      try {
-        const result = await Route.computeRoutes({
-          origin: state.currentLocation,
-          destination: { lat: Number(station.lat), lng: Number(station.lng) },
-          travelMode: "DRIVING",
-          fields: ["path"]
-        });
-        const path = result.routes?.[0]?.path;
-        if (path?.length && requestId === state.rangeRouteRequestId) {
-          routeLines.get(station.id)?.setPath(path);
-        }
-      } catch (error) {
-        console.warn(`Could not get route to ${station.name}:`, error);
-      }
-    }));
-  } catch (error) {
-    if (requestId === state.rangeRouteRequestId) {
-      console.error("Could not load in-range driving routes:", error);
-    }
-  }
+  // These arrows intentionally use direct connectors. Requesting a road route
+  // for every station on each redraw can exhaust the Routes API quota quickly.
 }
 
 function showDrivingRouteStatus(message, distance = "", details = "") {
@@ -811,21 +817,32 @@ async function drawDrivingRoute(station) {
   showDrivingRouteStatus(`Finding a driving route to ${station.name}...`);
 
   try {
-    const { Route } = await google.maps.importLibrary("routes");
+    const destination = {
+      lat: Number(station.lat),
+      lng: Number(station.lng)
+    };
+    const cacheKey = [
+      Number(state.currentLocation.lat).toFixed(4),
+      Number(state.currentLocation.lng).toFixed(4),
+      station.place_id || `${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}`
+    ].join(":");
+    let route = state.routeCache.get(cacheKey);
+
+    if (!route) {
+      const { Route } = await google.maps.importLibrary("routes");
+      if (requestId !== state.routeRequestId) return;
+
+      const result = await Route.computeRoutes({
+        origin: state.currentLocation,
+        destination,
+        travelMode: "DRIVING",
+        fields: ["path", "distanceMeters", "durationMillis", "viewport"]
+      });
+      route = result.routes?.[0];
+      if (route) state.routeCache.set(cacheKey, route);
+    }
     if (requestId !== state.routeRequestId) return;
 
-    const { routes } = await Route.computeRoutes({
-      origin: state.currentLocation,
-      destination: {
-        lat: Number(station.lat),
-        lng: Number(station.lng)
-      },
-      travelMode: "DRIVING",
-      fields: ["path", "distanceMeters", "durationMillis", "viewport"]
-    });
-    if (requestId !== state.routeRequestId) return;
-
-    const route = routes?.[0];
     if (!route || !route.path?.length) {
       showDrivingRouteStatus("No road route found. In-range arrows show direct connections.");
       return;
@@ -900,7 +917,7 @@ function renderMapMarkers() {
     const distanceKm = getStationDistanceKm(station);
     const congestion = getStationCongestion(station);
     const rangeNote = isRecommended
-      ? `<div style="font-size: 0.8rem; color: #166534; font-weight: 700; margin-bottom: 4px;">${priorityRank ? `Top ${priorityRank} · ` : ""}Within estimated range · ${formatDistance(distanceKm)} · Priority ${priorityScore}/100</div>`
+      ? `<div style="font-size: 0.8rem; color: #166534; font-weight: 700; margin-bottom: 4px;">${priorityRank ? `Top ${priorityRank} reservable · ` : ""}Within estimated range · ${formatDistance(distanceKm)} · Match score ${priorityScore}/100</div>`
       : distanceKm === null
         ? ""
         : `<div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">${formatDistance(distanceKm)} away</div>`;
@@ -909,7 +926,7 @@ function renderMapMarkers() {
       position: { lat: parseFloat(station.lat), lng: parseFloat(station.lng) },
       map: state.map,
       title: isRecommended
-        ? `${priorityRank ? `Priority ${priorityRank}. ` : ""}${station.name} — within estimated range, priority ${priorityScore} out of 100`
+        ? `${priorityRank ? `Top reservable choice ${priorityRank}. ` : ""}${station.name} — within estimated range, match score ${priorityScore} out of 100`
         : station.name,
       icon: {
         path: google.maps.SymbolPath.CIRCLE,
@@ -939,7 +956,7 @@ function renderMapMarkers() {
         <div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">Congestion estimate: ${congestion.label} · ${congestion.details}</div>
         <div style="font-size: 0.8rem; color: #334155; margin-bottom: 2px;"><strong>${station.type}</strong> (${station.speed} kW)</div>
         <div style="font-size: 0.8rem; color: #334155; margin-bottom: 4px;">Connector: ${station.connector}</div>
-        <div style="font-size: 0.8rem; color: #334155; margin-bottom: 6px;">Price: $${station.price.toFixed(2)}/kWh</div>
+        <div style="font-size: 0.8rem; color: #334155; margin-bottom: 6px;">Price: ${formatINR(station.price)}/kWh</div>
         <span style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; color: #fff; background: ${pinColor}; display: inline-block;">
           ${isReserved ? 'Reserved' : statusText}
         </span>
@@ -962,20 +979,26 @@ function renderMapMarkers() {
 
 function setActivePage(page) {
   const showStations = page === "stations";
+  const showAlgorithm = page === "algorithm";
   const mapPage = document.getElementById("map-page");
   const stationsPage = document.getElementById("stations-page");
-  if (!mapPage || !stationsPage) return;
+  const algorithmPage = document.getElementById("algorithm-page");
+  if (!mapPage || !stationsPage || !algorithmPage) return;
 
-  mapPage.hidden = showStations;
+  mapPage.hidden = showStations || showAlgorithm;
   stationsPage.hidden = !showStations;
+  algorithmPage.hidden = !showAlgorithm;
   const mapLink = document.getElementById("nav-home");
   const stationsLink = document.getElementById("nav-stations");
-  mapLink?.classList.toggle("active", !showStations);
+  const algorithmLink = document.getElementById("nav-algorithm");
+  mapLink?.classList.toggle("active", page === "map");
   stationsLink?.classList.toggle("active", showStations);
-  mapLink?.toggleAttribute("aria-current", !showStations);
+  algorithmLink?.classList.toggle("active", showAlgorithm);
+  mapLink?.toggleAttribute("aria-current", page === "map");
   stationsLink?.toggleAttribute("aria-current", showStations);
+  algorithmLink?.toggleAttribute("aria-current", showAlgorithm);
 
-  if (!showStations && state.map && typeof google !== "undefined" && google.maps?.event) {
+  if (page === "map" && state.map && typeof google !== "undefined" && google.maps?.event) {
     requestAnimationFrame(() => google.maps.event.trigger(state.map, "resize"));
   }
 }
@@ -1037,8 +1060,18 @@ function renderStationsList() {
     const secondDistance = getStationDistanceKm(second);
     const firstInRange = rangeKm !== null && firstDistance !== null && firstDistance <= rangeKm;
     const secondInRange = rangeKm !== null && secondDistance !== null && secondDistance <= rangeKm;
+    const firstReservableInRange = firstInRange && isStationReservable(first);
+    const secondReservableInRange = secondInRange && isStationReservable(second);
+
+    if (firstReservableInRange !== secondReservableInRange) {
+      return firstReservableInRange ? -1 : 1;
+    }
 
     if (firstInRange !== secondInRange) return firstInRange ? -1 : 1;
+    if (firstReservableInRange && secondReservableInRange) {
+      const scoreDifference = getStationPriorityScore(second) - getStationPriorityScore(first);
+      if (scoreDifference !== 0) return scoreDifference;
+    }
     if (firstInRange && secondInRange) {
       const scoreDifference = getStationPriorityScore(second) - getStationPriorityScore(first);
       if (scoreDifference !== 0) return scoreDifference;
@@ -1085,12 +1118,12 @@ function renderStationsList() {
     let actionBtnHtml = '';
     const isReserved = !!state.userReservations[station.id];
 
-    if (station.status === 'available') {
-      if (isReserved) {
-        actionBtnHtml = `<button class="btn-card-action btn-outline" onclick="cancelReservation(event, ${station.id})">Cancel</button>`;
-      } else {
-        actionBtnHtml = `<button class="btn-card-action primary" onclick="bookStation(event, ${station.id})">Reserve</button>`;
-      }
+    if (isReserved) {
+      actionBtnHtml = `<button class="btn-card-action btn-outline" onclick="cancelReservation(event, ${station.id})">Cancel</button>`;
+    } else if (isStationReservable(station)) {
+      actionBtnHtml = `<button class="btn-card-action primary" onclick="bookStation(event, ${station.id})">Reserve</button>`;
+    } else if (station.status === 'available') {
+      actionBtnHtml = `<span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">No plugs available</span>`;
     } else if (station.status === 'charging') {
       actionBtnHtml = `<span style="font-size: 0.75rem; color: var(--warning); font-weight: 500;">Busy charging</span>`;
     } else {
@@ -1102,7 +1135,7 @@ function renderStationsList() {
         <div class="station-card-header">
           <div class="station-title">${station.name}</div>
           <div class="station-card-badges">
-            ${priorityRank ? `<span class="priority-rank-badge rank-${priorityRank}">#${priorityRank} ${priorityRank === 1 ? "Top choice" : "Priority"}</span>` : ""}
+            ${priorityRank ? `<span class="priority-rank-badge rank-${priorityRank}">#${priorityRank} ${priorityRank === 1 ? "Top reserve" : "Reserve pick"}</span>` : ""}
             <span class="status-badge ${station.status}">
               <span class="status-dot"></span>
               ${isReserved ? 'Reserved' : statusText}
@@ -1119,7 +1152,7 @@ function renderStationsList() {
           <div class="station-distance">
             <span>${formatDistance(distance)} away</span>
             ${isWithinRange ? '<span class="within-range-badge">Within estimated range</span>' : ""}
-            ${isWithinRange ? `<span class="priority-score" title="Weighted score: distance 40%, plug availability 30%, charger speed 20%, rating 10%">Priority ${getStationPriorityScore(station)}/100</span>` : ""}
+            ${isWithinRange ? `<span class="priority-score" title="Weighted match score: distance 40%, plug availability 30%, charger speed 20%, rating 10%">Match ${getStationPriorityScore(station)}/100</span>` : ""}
           </div>
         `}
         <div class="station-details">
@@ -1133,7 +1166,7 @@ function renderStationsList() {
           </div>
           <div class="detail-item">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-            <span>$${station.price.toFixed(2)}/kWh</span>
+            <span>${formatINR(station.price)}/kWh</span>
           </div>
         </div>
         <div class="station-actions">
@@ -1145,7 +1178,7 @@ function renderStationsList() {
 }
 
 // Select a Station
-function selectStation(stationId, panMap = true) {
+function selectStation(stationId, panMap = true, showDrivingRoute = true) {
   if (state.selectedStationId) {
     const oldCard = document.getElementById(`station-card-${state.selectedStationId}`);
     if (oldCard) oldCard.classList.remove("active");
@@ -1177,11 +1210,11 @@ function selectStation(stationId, panMap = true) {
       <div style="padding: 6px; max-width: 220px; font-family: 'Outfit', sans-serif;">
         <div style="font-weight: 700; font-size: 0.95rem; color: #0f172a; margin-bottom: 2px;">${station.name}</div>
         <div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">${station.address}</div>
-        ${priorityScore === null ? "" : `<div style="font-size: 0.8rem; color: #166534; font-weight: 700; margin-bottom: 4px;">Priority ${priorityScore}/100</div>`}
+        ${priorityScore === null ? "" : `<div style="font-size: 0.8rem; color: #166534; font-weight: 700; margin-bottom: 4px;">Match score ${priorityScore}/100</div>`}
         <div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">${congestion.label} · ${congestion.details}</div>
         <div style="font-size: 0.8rem; color: #334155; margin-bottom: 2px;"><strong>${station.type}</strong> (${station.speed} kW)</div>
         <div style="font-size: 0.8rem; color: #334155; margin-bottom: 4px;">Connector: ${station.connector}</div>
-        <div style="font-size: 0.8rem; color: #334155; margin-bottom: 6px;">Price: $${station.price.toFixed(2)}/kWh</div>
+        <div style="font-size: 0.8rem; color: #334155; margin-bottom: 6px;">Price: ${formatINR(station.price)}/kWh</div>
         <span style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; color: #fff; background: ${pinColor}; display: inline-block;">
           ${isReserved ? 'Reserved' : statusText}
         </span>
@@ -1198,8 +1231,264 @@ function selectStation(stationId, panMap = true) {
       state.map.setZoom(14);
     }
 
-    drawDrivingRoute(station);
+    if (showDrivingRoute) drawDrivingRoute(station);
   }
+}
+
+function getReservationRewardDecision(station) {
+  const stationKey = station.place_id || `station-${station.id}`;
+  const rangeKm = getEstimatedRangeKm();
+  if (rangeKm === null || !Number.isFinite(rangeKm) || rangeKm <= 0) {
+    return { stationId: station.id, stationKey, rank: null, points: 0, reason: "Set your EV range to see whether this station is reachable and qualifies for cashback." };
+  }
+
+  const rankedStations = getRankedReservableStations(state.stations);
+  const rank = rankedStations.findIndex(option => option.id === station.id) + 1;
+  if (!rank) {
+    return { stationId: station.id, stationKey, rank: null, points: 0, reason: "This station is outside your estimated range or could not be compared with available stations." };
+  }
+  if (rank > 3) {
+    return { stationId: station.id, stationKey, rank, points: 0, reason: `A higher-priority reservable station was available within range. Choose one of the top 3 recommendations next time for cashback.` };
+  }
+  if (state.completedTripKeys[stationKey]) {
+    return { stationId: station.id, stationKey, rank, points: 0, reason: "Cashback for this station was already claimed. Choose another top recommendation to earn again." };
+  }
+
+  const priorityScore = getStationPriorityScore(station) ?? 0;
+  const totalPlugs = Math.max(1, Number(station.totalPlugs) || 1);
+  const openPlugPercent = Math.round(Math.min(totalPlugs, Number(station.availablePlugs) || 0) / totalPlugs * 100);
+  // Stronger match scores and more open plugs earn a larger, variable demo reward.
+  const points = Math.round(8 + priorityScore * 0.35 + openPlugPercent * 0.12);
+  return { stationId: station.id, stationKey, rank, priorityScore, openPlugPercent, points, reason: `Top ${rank} choice · match score ${priorityScore}/100 · ${openPlugPercent}% of plugs open.` };
+}
+
+function clearTripSimulation() {
+  if (state.tripAnimationFrame !== null) {
+    cancelAnimationFrame(state.tripAnimationFrame);
+    state.tripAnimationFrame = null;
+  }
+  state.tripMarker?.setMap(null);
+  state.tripPolyline?.setMap(null);
+  state.tripMarker = null;
+  state.tripPolyline = null;
+  state.activeTripStationId = null;
+
+  const card = document.getElementById("trip-progress-card");
+  if (card) card.hidden = true;
+  document.querySelector(".map-panel")?.classList.remove("has-trip");
+}
+
+function createTripCarMarker(position, title) {
+  const carMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">
+    <defs><filter id="shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#020617" flood-opacity=".36"/></filter></defs>
+    <circle cx="36" cy="34" r="29" fill="#fff" filter="url(#shadow)"/>
+    <circle cx="36" cy="34" r="26" fill="#ecfeff" stroke="#0891b2" stroke-width="2"/>
+    <path d="m21 36 3-8c.7-1.8 2.1-2.8 4-2.8h16c2 0 3.5 1 4.3 2.8l3.2 8 2.5 2.2v7.2h-4v-2.2H22v2.2h-4v-7.2z" fill="#06b6d4" stroke="#0f172a" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="m27 28-2 6h22l-2.5-6c-.4-.8-1.1-1.2-2-1.2H29c-.9 0-1.6.4-2 1.2" fill="#e0f2fe" stroke="#0f172a" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M19 37h34" stroke="#fff" stroke-width="1.5" opacity=".9"/>
+    <circle cx="26" cy="44" r="3.5" fill="#0f172a" stroke="#fff" stroke-width="1.5"/><circle cx="46" cy="44" r="3.5" fill="#0f172a" stroke="#fff" stroke-width="1.5"/>
+  </svg>`;
+  return new google.maps.Marker({
+    map: state.map,
+    position,
+    title,
+    zIndex: google.maps.Marker.MAX_ZINDEX + 20,
+    icon: {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(carMarkerSvg)}`,
+      scaledSize: new google.maps.Size(60, 60),
+      anchor: new google.maps.Point(30, 34)
+    }
+  });
+}
+
+function startTripSimulation(station) {
+  const origin = state.currentLocation;
+  const destination = { lat: Number(station.lat), lng: Number(station.lng) };
+  if (!state.map || !origin || !Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)) {
+    showToast("Choose a location before reserving to see the trip simulation.", "error");
+    return;
+  }
+
+  clearTripSimulation();
+  clearDrivingRoute();
+  state.infoWindow?.close();
+  const card = document.getElementById("trip-progress-card");
+  const title = document.getElementById("trip-progress-title");
+  const message = document.getElementById("trip-progress-message");
+  const progress = document.getElementById("trip-progress-bar");
+  const reward = document.getElementById("trip-reward-result");
+  const demoResult = document.getElementById("algorithm-demo-result");
+  const note = document.getElementById("trip-progress-note");
+  if (!card || !title || !message || !progress || !reward) return;
+
+  setActivePage("map");
+  state.algorithmDemoActive = false;
+  state.activeTripStationId = station.id;
+  title.textContent = "Your car is on the way";
+  message.textContent = `Simulated trip to ${station.name} · ${formatDistance(getStationDistanceKm(station) || 0)}`;
+  progress.style.width = "0%";
+  reward.hidden = true;
+  if (demoResult) demoResult.hidden = true;
+  if (note) note.textContent = "Trip movement and cashback are simulated (100 points = ₹4.00); no live tracking or payment is connected.";
+  card.hidden = false;
+  document.querySelector(".map-panel")?.classList.add("has-trip");
+
+  const bounds = new google.maps.LatLngBounds();
+  bounds.extend(origin);
+  bounds.extend(destination);
+  requestAnimationFrame(() => {
+    google.maps.event.trigger(state.map, "resize");
+    state.map.fitBounds(bounds, 72);
+  });
+
+  state.tripPolyline = new google.maps.Polyline({
+    map: state.map,
+    path: [origin, destination],
+    geodesic: true,
+    strokeColor: "#10b981",
+    strokeOpacity: 0.9,
+    strokeWeight: 5,
+    zIndex: 5
+  });
+  state.tripMarker = createTripCarMarker(origin, "Simulated EV trip");
+
+  const startedAt = performance.now();
+  const durationMs = 7000;
+  const animate = now => {
+    const rawProgress = Math.min(1, (now - startedAt) / durationMs);
+    const easedProgress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+    state.tripMarker?.setPosition({
+      lat: origin.lat + (destination.lat - origin.lat) * easedProgress,
+      lng: origin.lng + (destination.lng - origin.lng) * easedProgress
+    });
+    progress.style.width = `${Math.round(rawProgress * 100)}%`;
+
+    if (rawProgress < 1) {
+      state.tripAnimationFrame = requestAnimationFrame(animate);
+      return;
+    }
+
+    state.tripAnimationFrame = null;
+    state.activeTripStationId = null;
+    title.textContent = "You’ve arrived";
+    progress.style.width = "100%";
+    message.textContent = `${station.name} · Reservation ready`;
+
+    const decision = state.pendingReservationDecision?.stationId === station.id
+      ? state.pendingReservationDecision
+      : { ...getReservationRewardDecision(station), points: 0, reason: "The reservation could not be matched to its original station ranking." };
+    const points = decision.points;
+    state.pendingReservationDecision = null;
+    state.pendingTripReward = { stationKey: decision.stationKey, points };
+    document.getElementById("trip-reward-cashback").textContent =
+      points > 0 ? `${formatINR(points * 0.04)} cashback` : "No cashback this trip";
+    document.getElementById("trip-reward-points").textContent =
+      points > 0 ? `+${points} points ready to claim · ${decision.reason}` : decision.reason;
+    document.getElementById("trip-claim-reward-btn").textContent =
+      points > 0 ? `Claim ${formatINR(points * 0.04)} cashback` : "Back to Home";
+    reward.hidden = false;
+    if (points === 0) showToast(`No cashback this trip. ${decision.reason}`, "info");
+    renderRangeRecommendation();
+  };
+
+  state.tripAnimationFrame = requestAnimationFrame(animate);
+}
+
+function startAlgorithmMapDemo() {
+  if (!state.map || !state.currentLocation || !state.stationsLoaded) {
+    showToast("Choose a location on the Map page and wait for stations to load before running the demo.", "info");
+    return;
+  }
+
+  const rankedStations = getRankedReservableStations(state.stations);
+  const station = rankedStations[0];
+  if (!station) {
+    showToast("Set up your EV range and load an in-range available station to run the map demo.", "info");
+    return;
+  }
+
+  const origin = state.currentLocation;
+  const destination = { lat: Number(station.lat), lng: Number(station.lng) };
+  clearTripSimulation();
+  clearDrivingRoute();
+  state.infoWindow?.close();
+  setActivePage("map");
+  document.body.classList.add("trip-map-fullscreen");
+  state.algorithmDemoActive = true;
+  state.algorithmDemoRankedCount = rankedStations.length;
+  state.activeTripStationId = station.id;
+
+  const card = document.getElementById("trip-progress-card");
+  const title = document.getElementById("trip-progress-title");
+  const message = document.getElementById("trip-progress-message");
+  const progress = document.getElementById("trip-progress-bar");
+  const reward = document.getElementById("trip-reward-result");
+  const demoResult = document.getElementById("algorithm-demo-result");
+  const note = document.getElementById("trip-progress-note");
+  if (!card || !title || !message || !progress || !reward || !demoResult) return;
+
+  title.textContent = "Ranking reachable stations";
+  message.textContent = `The highest-ranked reservable match is ${station.name} · score ${getStationPriorityScore(station)}/100`;
+  progress.style.width = "0%";
+  reward.hidden = true;
+  demoResult.hidden = true;
+  if (note) note.textContent = "Algorithm preview only: the car movement is simulated; no station is reserved and no cashback is awarded.";
+  card.hidden = false;
+  document.querySelector(".map-panel")?.classList.add("has-trip");
+
+  const bounds = new google.maps.LatLngBounds();
+  bounds.extend(origin);
+  bounds.extend(destination);
+  requestAnimationFrame(() => {
+    google.maps.event.trigger(state.map, "resize");
+    state.map.fitBounds(bounds, 72);
+  });
+  state.tripPolyline = new google.maps.Polyline({
+    map: state.map,
+    path: [origin, destination],
+    geodesic: true,
+    strokeColor: "#10b981",
+    strokeOpacity: 0.9,
+    strokeWeight: 5,
+    zIndex: 5
+  });
+  state.tripMarker = createTripCarMarker(origin, "Algorithm map demo vehicle");
+
+  const startedAt = performance.now();
+  const durationMs = 7000;
+  const animate = now => {
+    const rawProgress = Math.min(1, (now - startedAt) / durationMs);
+    const easedProgress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+    state.tripMarker?.setPosition({
+      lat: origin.lat + (destination.lat - origin.lat) * easedProgress,
+      lng: origin.lng + (destination.lng - origin.lng) * easedProgress
+    });
+    progress.style.width = `${Math.round(rawProgress * 100)}%`;
+
+    if (rawProgress < 1) {
+      state.tripAnimationFrame = requestAnimationFrame(animate);
+      return;
+    }
+
+    state.tripAnimationFrame = null;
+    state.activeTripStationId = null;
+    state.algorithmDemoActive = false;
+    title.textContent = "Top recommendation reached";
+    progress.style.width = "100%";
+    message.textContent = `${station.name} · no reservation was made`;
+    document.getElementById("algorithm-demo-summary").textContent =
+      `Ranked #1 of ${rankedStations.length} reservable stations in your estimated range with a priority score of ${getStationPriorityScore(station)}/100.`;
+    demoResult.hidden = false;
+  };
+
+  state.tripAnimationFrame = requestAnimationFrame(animate);
+}
+
+function returnFromAlgorithmMapDemo() {
+  document.body.classList.remove("trip-map-fullscreen");
+  state.algorithmDemoActive = false;
+  clearTripSimulation();
+  setActivePage("algorithm");
 }
 
 // Booking Simulation
@@ -1213,12 +1502,43 @@ function bookStation(event, stationId) {
   }
 
   const station = state.stations.find(s => s.id === stationId);
-  if (!station || station.status !== 'available') return;
+  if (!station || !isStationReservable(station)) {
+    showToast("This station has no reservable plugs right now.", "error");
+    return;
+  }
 
+  state.confirmingReservationStationId = stationId;
+  document.getElementById("reservation-confirm-station").textContent = station.name;
+  toggleModal("reservation-confirm-modal", true);
+}
+
+function confirmStationReservation() {
+  const stationId = state.confirmingReservationStationId;
+  state.confirmingReservationStationId = null;
+  toggleModal("reservation-confirm-modal", false);
+
+  const station = state.stations.find(s => s.id === stationId);
+  if (!station || !isStationReservable(station)) {
+    showToast("This station is no longer available to reserve.", "error");
+    renderStationsList();
+    return;
+  }
+
+  state.pendingReservationDecision = getReservationRewardDecision(station);
+  setActivePage("map");
+  document.body.classList.add("trip-map-fullscreen");
+  requestAnimationFrame(() => {
+    if (state.map && typeof google !== "undefined" && google.maps?.event) {
+      google.maps.event.trigger(state.map, "resize");
+    }
+  });
+
+  state.pendingReservations[stationId] = true;
   showToast(`Reserving slot at ${station.name}...`, "info");
 
   setTimeout(() => {
     // Simulate API reserve
+    delete state.pendingReservations[stationId];
     station.availablePlugs -= 1;
     state.userReservations[stationId] = Date.now() + (15 * 60 * 1000); // 15 mins reservation window
 
@@ -1228,9 +1548,32 @@ function bookStation(event, stationId) {
     renderStationsList();
     renderMapMarkers();
 
-    // Keep active card selected
-    selectStation(stationId, false);
+    // Show the simulated journey, then offer an eligible cashback claim on arrival.
+    selectStation(stationId, true, false);
+    startTripSimulation(station);
   }, 800);
+}
+
+function cancelStationReservationConfirmation() {
+  state.confirmingReservationStationId = null;
+  toggleModal("reservation-confirm-modal", false);
+}
+
+function claimTripReward() {
+  const pendingReward = state.pendingTripReward;
+  if (pendingReward?.points > 0 && !state.completedTripKeys[pendingReward.stationKey]) {
+    state.completedTripKeys[pendingReward.stationKey] = true;
+    state.rewardPoints += pendingReward.points;
+    document.getElementById("algorithm-reward-balance").textContent = `${state.rewardPoints} points`;
+  }
+  state.pendingTripReward = null;
+
+  setActivePage("map");
+  document.body.classList.remove("trip-map-fullscreen");
+  clearTripSimulation();
+  if (state.map && typeof google !== "undefined" && google.maps?.event) {
+    requestAnimationFrame(() => google.maps.event.trigger(state.map, "resize"));
+  }
 }
 
 function cancelReservation(event, stationId) {
@@ -1238,6 +1581,11 @@ function cancelReservation(event, stationId) {
 
   const station = state.stations.find(s => s.id === stationId);
   if (!station) return;
+
+  if (state.activeTripStationId === stationId) {
+    clearTripSimulation();
+    document.body.classList.remove("trip-map-fullscreen");
+  }
 
   delete state.userReservations[stationId];
   station.availablePlugs += 1;
@@ -1252,6 +1600,15 @@ function cancelReservation(event, stationId) {
 
 // Filters & Event Listeners setup
 function setupEventListeners() {
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && document.body.classList.contains("trip-map-fullscreen")) {
+      document.body.classList.remove("trip-map-fullscreen");
+      if (state.map && typeof google !== "undefined" && google.maps?.event) {
+        requestAnimationFrame(() => google.maps.event.trigger(state.map, "resize"));
+      }
+    }
+  });
+
   document.getElementById("nav-home").addEventListener("click", event => {
     event.preventDefault();
     setActivePage("map");
@@ -1261,9 +1618,22 @@ function setupEventListeners() {
     renderStationsList();
     setActivePage("stations");
   });
+  document.getElementById("nav-algorithm").addEventListener("click", event => {
+    event.preventDefault();
+    setActivePage("algorithm");
+  });
   document.getElementById("stations-map-button").addEventListener("click", () => setActivePage("map"));
 
   document.getElementById("locate-me-btn").addEventListener("click", locateUser);
+  document.getElementById("trip-progress-dismiss").addEventListener("click", () => {
+    document.getElementById("trip-progress-card").hidden = true;
+    document.querySelector(".map-panel")?.classList.remove("has-trip");
+  });
+  document.getElementById("reservation-confirm-btn").addEventListener("click", confirmStationReservation);
+  document.getElementById("reservation-cancel-btn").addEventListener("click", cancelStationReservationConfirmation);
+  document.getElementById("trip-claim-reward-btn").addEventListener("click", claimTripReward);
+  document.getElementById("algorithm-demo-button").addEventListener("click", startAlgorithmMapDemo);
+  document.getElementById("algorithm-demo-return-btn").addEventListener("click", returnFromAlgorithmMapDemo);
   document.getElementById("nav-vehicle").addEventListener("click", openVehicleProfile);
   const rangePanel = ensureRangeRecommendationPanel();
   if (rangePanel) {
@@ -1277,14 +1647,7 @@ function setupEventListeners() {
         const stationId = Number(rewardButton.dataset.stationId);
         const station = state.stations.find(item => item.id === stationId);
         if (station) {
-          const stationKey = station.place_id || `station-${station.id}`;
-          if (!state.rewardedStationKeys[stationKey]) {
-            const points = Number(rewardButton.dataset.points) || 0;
-            state.rewardedStationKeys[stationKey] = true;
-            state.rewardPoints += points;
-            showToast(`${points} reward points earned for choosing a lower-congestion station.`, "success");
-            renderRangeRecommendation();
-          }
+          showToast("Alternative selected. Cashback is calculated after a completed reservation trip.", "info");
           selectStation(stationId, true);
         }
       }
