@@ -350,6 +350,10 @@ function getStationCongestion(station) {
 }
 
 function getStationPriorityScore(station) {
+  return getStationPriorityBreakdown(station)?.score ?? null;
+}
+
+function getStationPriorityBreakdown(station) {
   const rangeKm = getEstimatedRangeKm();
   const distanceKm = getStationDistanceKm(station);
   if (rangeKm === null || !Number.isFinite(rangeKm) || rangeKm <= 0 ||
@@ -364,13 +368,28 @@ function getStationPriorityScore(station) {
   const speedScore = Math.max(0, Math.min(100, (Number(station.speed) || 0) / 250 * 100));
   const rating = Number(station.rating);
   const ratingScore = Number.isFinite(rating) ? Math.max(0, Math.min(100, rating / 5 * 100)) : 50;
-
-  return Math.round(
-    distanceScore * 0.4 +
-    availabilityScore * 0.3 +
-    speedScore * 0.2 +
-    ratingScore * 0.1
-  );
+  const weightedDistance = distanceScore * 0.4;
+  const weightedAvailability = availabilityScore * 0.3;
+  const weightedSpeed = speedScore * 0.2;
+  const weightedRating = ratingScore * 0.1;
+  const score = Math.round(weightedDistance + weightedAvailability + weightedSpeed + weightedRating);
+  return {
+    rangeKm,
+    distanceKm,
+    distanceScore,
+    totalPlugs,
+    availablePlugs,
+    availabilityScore,
+    speed: Number(station.speed) || 0,
+    speedScore,
+    rating,
+    ratingScore,
+    weightedDistance,
+    weightedAvailability,
+    weightedSpeed,
+    weightedRating,
+    score
+  };
 }
 
 function isStationReservable(station) {
@@ -404,6 +423,114 @@ function formatINR(amount) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number(amount) || 0);
+}
+
+function formatCalculationNumber(value, digits = 1) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
+}
+
+function getAlgorithmCalculationRows(station, rankedStations) {
+  const breakdown = getStationPriorityBreakdown(station);
+  if (!breakdown) return [];
+
+  const vehicle = state.vehicleProfile;
+  const fullRange = Number(vehicle?.full_range_km) || 0;
+  const batteryPercent = Number(vehicle?.current_battery_percent) || 0;
+  const totalPlugs = Math.max(1, Number(station.totalPlugs) || 1);
+  const openPlugs = Math.max(0, Math.min(totalPlugs, Number(station.availablePlugs) || 0));
+  const openPlugPercent = openPlugs / totalPlugs * 100;
+  const occupiedPercent = (totalPlugs - openPlugs) / totalPlugs * 100;
+  const congestion = getStationCongestion(station);
+  const rank = rankedStations.findIndex(option => option.id === station.id) + 1;
+  const stationKey = station.place_id || `station-${station.id}`;
+  const rewardEligible = rank > 0 && rank <= 3 && !state.completedTripKeys[stationKey];
+  const points = rewardEligible
+    ? Math.round(8 + breakdown.score * 0.35 + Math.round(openPlugPercent) * 0.12)
+    : 0;
+
+  return [
+    {
+      label: "01 · Estimated usable range",
+      value: `${formatCalculationNumber(fullRange, 0)} km × ${formatCalculationNumber(batteryPercent, 0)}% ÷ 100 = ${formatCalculationNumber(breakdown.rangeKm)} km`
+    },
+    {
+      label: "02 · Reachability and distance factor",
+      value: `${formatCalculationNumber(breakdown.distanceKm)} km ≤ ${formatCalculationNumber(breakdown.rangeKm)} km → reachable; max(0, 1 − ${formatCalculationNumber(breakdown.distanceKm)} ÷ ${formatCalculationNumber(breakdown.rangeKm)}) × 100 = ${formatCalculationNumber(breakdown.distanceScore)}`
+    },
+    {
+      label: "03 · Available-plug factor",
+      value: `min(1, ${formatCalculationNumber(breakdown.availablePlugs, 0)} ÷ ${formatCalculationNumber(breakdown.totalPlugs, 0)}) × 100 = ${formatCalculationNumber(breakdown.availabilityScore)}`
+    },
+    {
+      label: "04 · Charger-speed factor",
+      value: `min(100, ${formatCalculationNumber(breakdown.speed, 0)} ÷ 250 × 100) = ${formatCalculationNumber(breakdown.speedScore)}`
+    },
+    {
+      label: "05 · Rating factor",
+      value: Number.isFinite(breakdown.rating)
+        ? `min(100, ${formatCalculationNumber(breakdown.rating, 1)} ÷ 5 × 100) = ${formatCalculationNumber(breakdown.ratingScore)}`
+        : `No rating supplied → default ${formatCalculationNumber(breakdown.ratingScore)}`
+    },
+    {
+      label: "06 · Weighted priority total",
+      value: `(${formatCalculationNumber(breakdown.distanceScore)} × 0.40 = ${formatCalculationNumber(breakdown.weightedDistance)}) + (${formatCalculationNumber(breakdown.availabilityScore)} × 0.30 = ${formatCalculationNumber(breakdown.weightedAvailability)}) + (${formatCalculationNumber(breakdown.speedScore)} × 0.20 = ${formatCalculationNumber(breakdown.weightedSpeed)}) + (${formatCalculationNumber(breakdown.ratingScore)} × 0.10 = ${formatCalculationNumber(breakdown.weightedRating)}) → round = ${breakdown.score}/100`
+    },
+    {
+      label: "07 · Congestion from plug counts",
+      value: `(${formatCalculationNumber(totalPlugs, 0)} − ${formatCalculationNumber(openPlugs, 0)}) ÷ ${formatCalculationNumber(totalPlugs, 0)} × 100 = ${formatCalculationNumber(occupiedPercent)}% occupied · ${congestion.label}`
+    },
+    {
+      label: "08 · Rank and potential cashback",
+      value: rewardEligible
+        ? `Rank #${rank}/${rankedStations.length}; round(8 + ${breakdown.score} × 0.35 + ${Math.round(openPlugPercent)} × 0.12) = ${points} points; ${points} × ₹0.04 = ${formatINR(points * 0.04)}`
+        : rank > 3
+          ? `Rank #${rank}/${rankedStations.length} is outside the top 3 → no cashback`
+          : state.completedTripKeys[stationKey]
+            ? "Cashback for this station was already claimed → no repeat reward"
+            : "No eligible top-3 reservation → no cashback"
+    }
+  ];
+}
+
+function renderAlgorithmWorkedExample() {
+  const status = document.getElementById("algorithm-example-status");
+  const calculationList = document.getElementById("algorithm-example-calculations");
+  if (!status || !calculationList) return;
+
+  const rankedStations = getRankedReservableStations(state.stations);
+  const station = rankedStations[0];
+  if (!station) {
+    status.textContent = "Choose a location, set up your EV range, and load at least one available station within range to see the calculations.";
+    calculationList.hidden = true;
+    calculationList.replaceChildren();
+    return;
+  }
+
+  status.textContent = `Current top choice: ${station.name}. Values below use your live location, EV profile, station rating, charger speed, and reported plug counts.`;
+  calculationList.innerHTML = getAlgorithmCalculationRows(station, rankedStations)
+    .map(row => `<div class="algorithm-example-row"><strong>${row.label}</strong><span>${row.value}</span></div>`)
+    .join("");
+  calculationList.hidden = false;
+}
+
+function renderAlgorithmLiveTrace(station, rankedStations) {
+  const panel = document.getElementById("algorithm-calculation-panel");
+  const stationTitle = document.getElementById("algorithm-live-station");
+  const steps = document.getElementById("algorithm-live-steps");
+  if (!panel || !stationTitle || !steps) return;
+
+  stationTitle.textContent = `Selected #1 · ${station.name}`;
+  steps.innerHTML = getAlgorithmCalculationRows(station, rankedStations)
+    .map((row, index) => `<div class="algorithm-live-step" data-step="${index}"><strong>${row.label}</strong><span>${row.value}</span></div>`)
+    .join("");
+  panel.hidden = false;
+}
+
+function setAlgorithmLiveTraceStep(stepIndex) {
+  document.querySelectorAll("#algorithm-live-steps .algorithm-live-step").forEach((step, index) => {
+    step.classList.toggle("is-current", index === stepIndex);
+    step.classList.toggle("is-complete", index < stepIndex);
+  });
 }
 
 function ensureRangeRecommendationPanel() {
@@ -1001,6 +1128,7 @@ function setActivePage(page) {
   if (page === "map" && state.map && typeof google !== "undefined" && google.maps?.event) {
     requestAnimationFrame(() => google.maps.event.trigger(state.map, "resize"));
   }
+  if (showAlgorithm) renderAlgorithmWorkedExample();
 }
 
 // Sidebar Stations List Rendering
@@ -1275,6 +1403,8 @@ function clearTripSimulation() {
 
   const card = document.getElementById("trip-progress-card");
   if (card) card.hidden = true;
+  const calculationPanel = document.getElementById("algorithm-calculation-panel");
+  if (calculationPanel) calculationPanel.hidden = true;
   document.querySelector(".map-panel")?.classList.remove("has-trip");
 }
 
@@ -1318,6 +1448,7 @@ function startTripSimulation(station) {
   const progress = document.getElementById("trip-progress-bar");
   const reward = document.getElementById("trip-reward-result");
   const demoResult = document.getElementById("algorithm-demo-result");
+  const calculationPanel = document.getElementById("algorithm-calculation-panel");
   const note = document.getElementById("trip-progress-note");
   if (!card || !title || !message || !progress || !reward) return;
 
@@ -1329,6 +1460,7 @@ function startTripSimulation(station) {
   progress.style.width = "0%";
   reward.hidden = true;
   if (demoResult) demoResult.hidden = true;
+  if (calculationPanel) calculationPanel.hidden = true;
   if (note) note.textContent = "Trip movement and cashback are simulated (100 points = ₹4.00); no live tracking or payment is connected.";
   card.hidden = false;
   document.querySelector(".map-panel")?.classList.add("has-trip");
@@ -1336,10 +1468,7 @@ function startTripSimulation(station) {
   const bounds = new google.maps.LatLngBounds();
   bounds.extend(origin);
   bounds.extend(destination);
-  requestAnimationFrame(() => {
-    google.maps.event.trigger(state.map, "resize");
-    state.map.fitBounds(bounds, 72);
-  });
+  state.map.fitBounds(bounds, 72);
 
   state.tripPolyline = new google.maps.Polyline({
     map: state.map,
@@ -1403,7 +1532,7 @@ function startAlgorithmMapDemo() {
   const rankedStations = getRankedReservableStations(state.stations);
   const station = rankedStations[0];
   if (!station) {
-    showToast("Set up your EV range and load an in-range available station to run the map demo.", "info");
+    showToast("Set up your EV range and load an available station within range before running the demo.", "info");
     return;
   }
 
@@ -1415,7 +1544,6 @@ function startAlgorithmMapDemo() {
   setActivePage("map");
   document.body.classList.add("trip-map-fullscreen");
   state.algorithmDemoActive = true;
-  state.algorithmDemoRankedCount = rankedStations.length;
   state.activeTripStationId = station.id;
 
   const card = document.getElementById("trip-progress-card");
@@ -1427,14 +1555,16 @@ function startAlgorithmMapDemo() {
   const note = document.getElementById("trip-progress-note");
   if (!card || !title || !message || !progress || !reward || !demoResult) return;
 
-  title.textContent = "Ranking reachable stations";
-  message.textContent = `The highest-ranked reservable match is ${station.name} · score ${getStationPriorityScore(station)}/100`;
+  title.textContent = "Calculating the best station";
+  message.textContent = `Top choice: ${station.name} · priority score ${getStationPriorityScore(station)}/100`;
   progress.style.width = "0%";
   reward.hidden = true;
   demoResult.hidden = true;
-  if (note) note.textContent = "Algorithm preview only: the car movement is simulated; no station is reserved and no cashback is awarded.";
+  if (note) note.textContent = "Algorithm preview only: movement is simulated; no station is reserved and no cashback is awarded.";
   card.hidden = false;
   document.querySelector(".map-panel")?.classList.add("has-trip");
+  renderAlgorithmLiveTrace(station, rankedStations);
+  setAlgorithmLiveTraceStep(0);
 
   const bounds = new google.maps.LatLngBounds();
   bounds.extend(origin);
@@ -1455,10 +1585,17 @@ function startAlgorithmMapDemo() {
   state.tripMarker = createTripCarMarker(origin, "Algorithm map demo vehicle");
 
   const startedAt = performance.now();
-  const durationMs = 7000;
+  const durationMs = 8000;
+  let previousCalculationStep = 0;
   const animate = now => {
     const rawProgress = Math.min(1, (now - startedAt) / durationMs);
     const easedProgress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+    const calculationStep = Math.min(7, Math.floor(rawProgress * 8));
+    if (calculationStep !== previousCalculationStep) {
+      previousCalculationStep = calculationStep;
+      setAlgorithmLiveTraceStep(calculationStep);
+    }
+
     state.tripMarker?.setPosition({
       lat: origin.lat + (destination.lat - origin.lat) * easedProgress,
       lng: origin.lng + (destination.lng - origin.lng) * easedProgress
@@ -1474,10 +1611,11 @@ function startAlgorithmMapDemo() {
     state.activeTripStationId = null;
     state.algorithmDemoActive = false;
     title.textContent = "Top recommendation reached";
+    setAlgorithmLiveTraceStep(7);
     progress.style.width = "100%";
-    message.textContent = `${station.name} · no reservation was made`;
+    message.textContent = `${station.name} · demo only, no reservation made`;
     document.getElementById("algorithm-demo-summary").textContent =
-      `Ranked #1 of ${rankedStations.length} reservable stations in your estimated range with a priority score of ${getStationPriorityScore(station)}/100.`;
+      `Ranked #1 of ${rankedStations.length} reservable stations in your estimated range with a priority score of ${getStationPriorityScore(station)}/100. The panel shows the exact range, score, congestion, and potential cashback calculations.`;
     demoResult.hidden = false;
   };
 

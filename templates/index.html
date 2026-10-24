@@ -156,6 +156,11 @@
           </div>
           <span class="trip-progress-note" id="trip-progress-note">Trip movement and cashback are simulated (100 points = ₹4.00); no live tracking or payment is connected.</span>
         </section>
+        <section class="algorithm-calculation-panel" id="algorithm-calculation-panel" aria-live="polite" aria-label="Live algorithm calculations" hidden>
+          <span class="algorithm-live-kicker">LIVE ALGORITHM TRACE</span>
+          <strong id="algorithm-live-station"></strong>
+          <div class="algorithm-live-steps" id="algorithm-live-steps"></div>
+        </section>
         <div class="map-recommendation-legend" id="map-recommendation-legend" aria-label="Map marker legend" hidden>
           <div class="map-legend-title">Station map</div>
           <div class="map-legend-item">
@@ -238,6 +243,13 @@
       </div>
 
       <div class="algorithm-grid">
+        <article class="algorithm-card algorithm-card-wide algorithm-example-card">
+          <span class="algorithm-step">Worked example · current map data</span>
+          <h2>See the actual calculation</h2>
+          <p id="algorithm-example-status">Choose a location, set up your EV range, and load stations to calculate a live example.</p>
+          <div class="algorithm-example-calculations" id="algorithm-example-calculations" hidden></div>
+        </article>
+
         <article class="algorithm-card algorithm-card-wide">
           <span class="algorithm-step">01 · Reachable stations</span>
           <h2>Range filter</h2>
